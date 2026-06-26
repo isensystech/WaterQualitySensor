@@ -17,7 +17,7 @@ pio run -t clean              # clean
   `platformio/espressif32` platform does **not** support the Arduino framework on the
   ESP32-C6 — do not switch to it.
 - Target board: `seeed_xiao_esp32c6` (4 MB flash, 320 KB RAM, RISC-V).
-- App currently ~60% of a 1.98 MB OTA slot.
+- App currently ~63% of the ~1.94 MB OTA app slot (`app0`/`app1`, `0x1F0000` each).
 - The OTA app image is `.pio/build/seeed_xiao_esp32c6/firmware.bin` (the app-partition
   image, **not** a merged/factory bin). This is the file the file-mule OTA flow uploads.
 - **Releases are published as GitHub Release assets, not committed.** Both `.pio/` and
@@ -109,7 +109,10 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
   stick. Defences are pre-commit validation (`Update.h` header/size check) + the recovery
   AP gesture. An image that fails to boot *at all* has no software escape — validate hard.
 
-## Current focus / roadmap
+## Feature notes & roadmap
+
+The two big subsystems below are **shipped** (v0.8.x OTA, v0.9.0 sensor management); the notes
+stay here because they document non-obvious design choices. RTC is the only open roadmap item.
 
 - **Sensor management (done in v0.9.0)** — every I2C sensor (POET `0x1F`, BAR30 `0x76`, Cyclops
   ADS `0x48`, Blue Robotics Celsius/TSYS01 `0x77`) now has its own SETTINGS card with an enable
@@ -125,38 +128,36 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
   math still uses POET's own temp). **CSV note:** BAR30/POET columns are now blank when those
   sensors are disabled (previously always numeric) — downstream parsers should treat empty as N/A.
 
-- **OTA (in progress)** — "lone-diver file-mule" path: on the surface, a phone/laptop that
-  *already downloaded* `firmware.bin` over the internet joins the logger AP and uploads it;
-  the logger flashes its inactive slot and reboots. SoftAP↔internet exclusivity means the
-  download and the upload are always two separate steps (cache-then-upload). Pieces:
+- **OTA (shipped v0.8.0; firmware-update HELP topic added v0.8.1)** — "lone-diver file-mule"
+  path: on the surface, a phone/laptop that *already downloaded* `firmware.bin` over the
+  internet joins the logger AP and uploads it; the logger flashes its inactive slot and reboots.
+  SoftAP↔internet exclusivity means the download and the upload are always two separate steps
+  (cache-then-upload). How it works:
   - **`POST /api/ota`** streaming upload handler in `setup_portal.cpp` — `WebServer`'s
-    `on(path, HTTP_POST, onFinish, onUpload)` form + `Update.h`. `Update.begin(UPDATE_SIZE_UNKNOWN)`
-    → `write()` per chunk → `end(true)`. **Validate before commit:** `Update` checks the
-    ESP32 image magic/size; additionally verify the embedded app-descriptor project name so a
-    wrong `.bin` is rejected, not flashed. Refuse if `g_logging`. Reply, then `ESP.restart()`.
-  - **Firmware-update card** in the SETTINGS view of `portal_page.h` (HTML+JS stays in that
-    file). Shows current `FW_VERSION`; file picker + `XMLHttpRequest` with `upload.onprogress`
-    for a progress bar; clear "do not power off / reconnect after reboot" messaging.
-  - On-device feedback: draw an "UPDATING — DO NOT POWER OFF" screen + byte/percent progress
-    from inside the upload handler (the main loop is blocked during the transfer).
-  - **Recovery AP** boot gesture (CAL boot-hold → keep holding past the CAL threshold →
-    upload-only AP) as the sealed-unit safety net: minimal server (just `/` + `/api/ota`),
-    no sensor init required, for re-flashing a unit whose normal firmware boots but misbehaves.
-  - Decisions still open: client-side hash (bundle a tiny MD5 for `Update.setMD5()` vs rely on
-    header validation), whether the recovery AP ships in v1 or a follow-up, and whether to gate
-    upload behind a confirmation on the open AP.
-  - **Decisions (resolved + built in v0.8.0):** recovery AP **ships in v1**. Pre-commit validation
-    lives in `otaHeaderOk()` (`setup_portal.cpp`) as a layered header check, strongest first:
-    image magic `0xE9` → **`chip_id == ESP32-C6` (0x000D, image byte 12)** → app-descriptor magic
-    (`0xABCD5432`, byte 32) → `project_name` (byte 80) vs the running image's
-    (`esp_app_get_description()`). **Caveat:** the precompiled Arduino core stamps *every* sketch
-    with `project_name = "arduino-lib-builder"`, so the name check only separates us from
-    non-Arduino (raw ESP-IDF) images — **the chip-id check is the real guard** against a
-    wrong-variant bin. No client-side MD5 (the image's appended SHA256, verified by `Update.end()`,
-    catches truncation/corruption). Upload is gated behind a **simple in-page confirm** on the open AP.
-  - **Implemented surface:** `POST /api/ota` (size via `?size=` query for the on-device % bar),
-    `otaScreenBegin/Bar/Msg()` progress screens, the SETTINGS "Firmware update" card + `otaUpload()`
-    XHR, the 3-way boot gesture `bootHoldGesture()` (release=normal / CAL / keep-holding=recovery),
-    `portalBeginRecovery()` + `RECOVERY_PAGE`, and `g_otaRebootAt`/`g_recovery` wired into `loop()`.
+    `on(path, HTTP_POST, handleOtaDone, handleOtaUpload)` form + `Update.h`:
+    `Update.begin(UPDATE_SIZE_UNKNOWN)` → `write()` per chunk → `end(true)`. Refuses while
+    `g_logging`. Image size arrives via a `?size=` query so the on-device bar can show %. After
+    a good flash it arms `g_otaRebootAt` (≈800 ms out) and `loop()` calls `ESP.restart()` once
+    the reply has flushed.
+  - **Pre-commit validation** is `otaHeaderOk()` (`setup_portal.cpp`) — a layered header check,
+    strongest first: image magic `0xE9` → **`chip_id == ESP32-C6` (0x000D, image byte 12)** →
+    app-descriptor magic (`0xABCD5432`, byte 32) → `project_name` (byte 80) vs the running
+    image's (`esp_app_get_description()`). **Caveat:** the precompiled Arduino core stamps
+    *every* sketch with `project_name = "arduino-lib-builder"`, so the name check only separates
+    us from non-Arduino (raw ESP-IDF) images — **the chip-id check is the real guard** against a
+    wrong-variant bin. No client-side MD5: the image's appended SHA256, verified by
+    `Update.end()`, catches truncation/corruption.
+  - **Firmware-update card** in the SETTINGS view of `portal_page.h` (HTML+JS stays there) —
+    shows current `FW_VERSION`, file picker + `otaUpload()` `XMLHttpRequest` with
+    `upload.onprogress`, and "do not power off / reconnect after reboot" messaging. Upload is
+    gated behind a **simple in-page confirm** on the open AP.
+  - **On-device feedback:** `otaScreenBegin/Bar/Msg()` draw the "UPDATING — DO NOT POWER OFF"
+    screen + byte/percent progress from inside the upload handler (the main loop is blocked for
+    the whole transfer — this is the rule-5 exception).
+  - **Recovery AP** (the sealed-unit safety net): the 3-way boot gesture `bootHoldGesture()`
+    (release = normal / CAL hold / keep holding past CAL = recovery) decides mode *before* any
+    sensor or SD init, so a bad driver can't block it. `portalBeginRecovery()` brings up a
+    minimal upload-only AP (`RECOVERY_PAGE` + `/api/ota` only) to re-flash a unit whose normal
+    firmware boots but misbehaves; `g_recovery` makes `loop()` service just the AP.
 - **RTC** (DS3231SN) deferred to the next board revision; firmware already scaffolds
   `nowUnix()` / `g_timeSynced` / `g_timeApprox`.
