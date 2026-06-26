@@ -1,0 +1,11 @@
+# XIAO ESP32-C6 (4 MB flash) — dual-slot OTA, no SPIFFS (this project logs to microSD).
+# Two ~1.98 MB app slots leave generous headroom for the TFT + JSON + WiFi + WebServer image.
+# otadata is what the bootloader reads to pick the active slot and to support rollback.
+#
+# Name,     Type, SubType, Offset,    Size,      Flags
+nvs,        data, nvs,     0x9000,    0x5000,
+otadata,    data, ota,     0xE000,    0x2000,
+app0,       app,  ota_0,   0x10000,   0x1F0000,
+app1,       app,  ota_1,   0x200000,  0x1F0000,
+# Trailing 0x3F0000–0x400000 (64 KB) left free — room for a coredump or NVS-backed
+# OTA flags later without disturbing either app slot.
