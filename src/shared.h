@@ -45,6 +45,7 @@
 #define BTN_DEBOUNCE_MS    25
 #define BTN_LONG_MS        900
 #define BTN_BOOTHOLD_MS    1500       // hold at power-on -> calibration mode
+#define BTN_RECOVERY_MS    3000       // KEEP holding past the CAL window -> firmware-recovery AP
 #define EC_SUBMERGED_NA    50L
 #define SUBMERGE_DEBOUNCE  3
 #define SURFACE_DEBOUNCE   3
@@ -63,7 +64,7 @@
 #define DIM_MIN_DEFAULT    10         // default idle-to-dim timeout
 
 // ---------------- firmware version ----------------
-#define FW_VERSION         "0.7.0"
+#define FW_VERSION         "0.8.1"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.
@@ -76,6 +77,7 @@ struct PoetResult { int32_t temp_mC, orp_uV, ugs_uV, ec_nA, ec_uV; };
 
 enum NavEvent { NAV_NONE, NAV_SHORT, NAV_LONG };
 enum AppMode  { MODE_RUN, MODE_CAL };
+enum BootMode { BOOT_NORMAL, BOOT_CAL, BOOT_RECOVERY };   // power-on twist gesture outcome
 
 struct CalData {
   bool  ph_valid;  float ph_ugs7_mV, ph_slope, ph_calT;   // pH = 7 + (Ugs-ugs7)/slope
@@ -136,6 +138,10 @@ extern float     g_cycV;          // latest Cyclops output voltage (0-5 V, after
 extern bool      g_timeSynced, g_timeApprox;
 extern uint32_t  g_epoch0, g_epochAtMillis;
 
+// OTA / firmware recovery
+extern bool             g_recovery;     // true => boot came up in upload-only recovery AP mode
+extern volatile uint32_t g_otaRebootAt; // millis() deadline to ESP.restart() after a good OTA (0 = none)
+
 // ---------------- prototypes ----------------
 // main
 bool sdEnsure();
@@ -157,6 +163,11 @@ void drawTile(int16_t x, int16_t y, int16_t w, int16_t h,
               const char *label, const char *val, const char *units,
               TileState st, uint8_t maxVs = 4);
 
+// OTA progress screens (defined in main .ino, driven from the upload handler while loop() is blocked)
+void otaScreenBegin();                 // static "UPDATING / DO NOT POWER OFF" frame + empty bar
+void otaScreenBar(uint8_t pct);        // update just the bar fill + percent (cheap, call on % change)
+void otaScreenMsg(const char *l1, const char *l2);  // terminal message (OK / FAILED + reason)
+
 // poet
 bool poetStart();
 bool poetFetch(PoetResult &out);
@@ -176,6 +187,7 @@ float cycConc(float volts);
 
 // setup portal (WiFi UTC sync + deployment header + thresholds + accent)
 void portalBegin();
+void portalBeginRecovery();   // minimal upload-only AP: serves the recovery page + /api/ota only
 void portalLoop();
 void portalEnd();
 bool portalActive();

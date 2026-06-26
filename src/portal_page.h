@@ -122,6 +122,17 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <button class=b2 onclick=cal()>Enter calibration mode (on device)</button>
 <p class=hint>Calibration switches the logger into its on-device wizard and turns Wi-Fi off.</p></div>
 
+<div class=c><h3>Firmware update</h3>
+<p class=hint>Current firmware: <b id=fwver>&hellip;</b></p>
+<label>Firmware file (.bin)</label>
+<input type=file id=fwfile accept=".bin,application/octet-stream">
+<button class=b2 onclick=otaUpload()>Update firmware from file&hellip;</button>
+<div id=otawrap style="display:none;margin-top:10px">
+<div style="background:#0c1020;border:1px solid #2a3252;border-radius:6px;height:14px;overflow:hidden">
+<div id=otafill style="height:100%;width:0%;background:var(--accent);transition:width .2s"></div></div>
+<div class=hint id=otamsg></div></div>
+<p class=hint>Download the firmware <code>.bin</code> to this phone first (needs internet), then upload it here over the logger's Wi-Fi. The logger checks the file, flashes itself and reboots &mdash; rejoin <code>WaterQuality-Logger</code> after about 10&nbsp;seconds. <b>Don't power the logger off during the update.</b></p></div>
+
 <button class=b1 onclick=saveSettings()>Save settings</button>
 <button class=bk onclick="go('home')">Back</button></div>
 
@@ -222,6 +233,19 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <li><b>microSD card:</b> make sure it's seated. Don't pull it while the status line shows <span class=k>LOG</span>.</li>
 <li><b>Depth:</b> stay within the housing's rated depth.</li>
 </ul>
+</div></details>
+
+<details><summary>&#128260; Updating the firmware</summary><div class=db>
+<p>Firmware is the logger's built-in software. Updates add features and fixes. Because the logger is <b>sealed</b>, updates go over its own Wi-Fi &mdash; no cable, no opening the housing.</p>
+<p><b>It's a two-step trip</b> (the logger's Wi-Fi has no internet, so one phone can't do both at once):</p>
+<ol>
+<li><b>Get the file first, on the internet.</b> On your phone or laptop &mdash; while on normal Wi-Fi or cellular &mdash; download the firmware file (it ends in <code>.bin</code>) that the team sent you. Note where it saved (usually <b>Downloads</b>).</li>
+<li><b>Then upload it to the logger.</b> Join the logger's Wi-Fi <code>WaterQuality-Logger</code>, open <code>192.168.4.1</code>, go to <b>SETTINGS &rarr; Firmware update</b>, choose the <code>.bin</code> you downloaded, and confirm.</li>
+</ol>
+<p>The logger checks the file, installs it, and restarts on its own. The screen shows <span class=k>UPDATING</span> with a progress bar; when it finishes it reboots. Rejoin <code>WaterQuality-Logger</code> after about 10&nbsp;seconds and re-open this page &mdash; the version shown at the top should be the new one.</p>
+<div class=danger><b>Don't power the logger off while it says UPDATING.</b> Charge the battery before you start. If an upload fails or is interrupted, the logger simply keeps its <b>old</b> firmware &mdash; just try again.</div>
+<p><b>Safety net (recovery mode):</b> if an update ever leaves the logger misbehaving, hold the twist control while powering on and <b>keep holding past the calibration prompt</b> until the screen reads <span class=k>RECOVERY</span>. That brings up a stripped-down Wi-Fi that does one thing &mdash; re-flash firmware. Join <code>WaterQuality-Logger</code>, open <code>192.168.4.1</code>, upload a known-good <code>.bin</code>. Power-cycle to leave.</p>
+<p class=hint>Only upload firmware meant for <b>this</b> logger. It rejects files that aren't for its chip, but it can't tell two builds made for it apart &mdash; so use the file the team gave you.</p>
 </div></details>
 
 <details><summary>&#128190; Your data &amp; log files</summary><div class=db>
@@ -350,7 +374,7 @@ fetch('https://api.open-meteo.com/v1/forecast?latitude='+v[0]+'&longitude='+v[1]
 function cal(){fetch('/api/cal',{method:'POST'}).then(r=>r.text()).then(t=>{ok('Switching device to calibration mode...');}).catch(e=>{});}
 function buildThresh(){var th={};TM.forEach(function(m){var o={};TB.forEach(function(b){var v=id(m+'_'+b).value;if(v!=='')o[b]=parseFloat(v);});if(Object.keys(o).length)th[m]=o;});return th;}
 function fillState(s){if(!s)return;
-if(s.ver){id('ver').textContent='firmware '+s.ver;id('aver').textContent='Firmware '+s.ver;}
+if(s.ver){id('ver').textContent='firmware '+s.ver;id('aver').textContent='Firmware '+s.ver;var fv=id('fwver');if(fv)fv.textContent=s.ver;}
 if(s.mission!=null)id('mission').value=s.mission;
 if(s.op!=null)id('op').value=s.op;
 if(s.site!=null)id('site').value=s.site;
@@ -388,6 +412,61 @@ if(confirm('Download a combined copy of all logs first? (recommended - deletion 
 setTimeout(function(){if(confirm('Delete ALL dive logs from the card now?'))doClear();},2000);}
 else if(confirm('Delete ALL dive logs from the card now? This cannot be undone.'))doClear();}
 function doClear(){fetch('/api/logclear',{method:'POST'}).then(r=>r.text()).then(t=>{loadLogs();}).catch(e=>{id('loglist').textContent='clear failed';});}
+function otaUpload(){var f=id('fwfile').files[0];
+var w=id('otawrap'),fill=id('otafill'),m=id('otamsg');
+function say(c,t){w.style.display='block';m.className=c;m.textContent=t;}
+if(!f){say('warn','Choose a .bin firmware file first.');return;}
+if(!/\.bin$/i.test(f.name)){say('warn','That does not look like a .bin file.');return;}
+if(!confirm('Flash "'+f.name+'" ('+kb(f.size)+')?\n\nThe logger will verify it, then reboot. Do NOT power it off during the update.'))return;
+say('hint','Uploading 0%');fill.style.width='0%';
+var x=new XMLHttpRequest();x.open('POST','/api/ota?size='+f.size);
+x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*100);fill.style.width=p+'%';m.textContent='Uploading '+p+'%';}};
+x.onload=function(){var r={};try{r=JSON.parse(x.responseText);}catch(e){}
+if(x.status===200&&r.ok){fill.style.width='100%';say('ok','Update OK \u2014 the logger is rebooting. Rejoin the Wi-Fi in ~10 s, then re-open this page to confirm the version.');}
+else{say('warn','Update failed: '+(r.err||('HTTP '+x.status))+'. The logger kept its old firmware.');}};
+x.onerror=function(){say('warn','Connection dropped. If the logger rebooted, the update probably succeeded \u2014 rejoin the Wi-Fi and check the version.');};
+var fd=new FormData();fd.append('f',f);x.send(fd);}
 window.onload=function(){loadState();};
+</script></body></html>
+)HTML";
+
+// Minimal upload-only page served by the recovery AP (boot-hold-past-CAL gesture). Standalone:
+// it shares no JS with PAGE above, because recovery skips the normal portal entirely.
+static const char RECOVERY_PAGE[] PROGMEM = R"HTML(
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui;margin:0;padding:18px;background:#0c1020;color:#e8eaf0}
+h2{color:#ff5b50;margin:.2em 0}.c{background:#161b30;border-radius:12px;padding:16px;margin:12px 0}
+.hint{font-size:13px;color:#9aa3c0;line-height:1.5}
+code{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1px 6px;font-family:ui-monospace,monospace;color:#19c3c3}
+input,button{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;font-size:16px;margin-top:8px}
+input{border:1px solid #2a3252;background:#0c1020;color:#fff}button{border:0;background:#185fa5;color:#fff}
+#bar{display:none;margin-top:10px}#wrap{background:#0c1020;border:1px solid #2a3252;border-radius:6px;height:14px;overflow:hidden}
+#fill{height:100%;width:0%;background:#19c3c3;transition:width .2s}#msg{font-size:13px;margin-top:6px}
+.ok{color:#5dcaa5}.warn{color:#efb02a}
+</style></head><body>
+<h2>Recovery &mdash; firmware upload</h2>
+<div class=c>
+<p class=hint>This is the logger's <b>recovery mode</b>. It does one thing: re-flash firmware. Pick a firmware <code>.bin</code> and upload it &mdash; the logger verifies it, flashes itself and reboots into normal mode. <b>Don't power off during the update.</b></p>
+<input type=file id=f accept=".bin,application/octet-stream">
+<button onclick=up()>Upload &amp; flash firmware</button>
+<div id=bar><div id=wrap><div id=fill></div></div><div id=msg></div></div>
+<p class=hint>Power-cycle the logger to leave recovery without flashing.</p>
+</div>
+<script>
+function kb(n){return n<1024?n+' B':(n/1024).toFixed(1)+' KB';}
+function up(){var f=document.getElementById('f').files[0];
+if(!f){alert('Choose a .bin file first.');return;}
+if(!/\.bin$/i.test(f.name)){alert('That does not look like a .bin file.');return;}
+if(!confirm('Flash "'+f.name+'" ('+kb(f.size)+')? Do not power off during the update.'))return;
+var bar=document.getElementById('bar'),fill=document.getElementById('fill'),m=document.getElementById('msg');
+bar.style.display='block';m.className='';m.textContent='Uploading 0%';fill.style.width='0%';
+var x=new XMLHttpRequest();x.open('POST','/api/ota?size='+f.size);
+x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*100);fill.style.width=p+'%';m.textContent='Uploading '+p+'%';}};
+x.onload=function(){var r={};try{r=JSON.parse(x.responseText);}catch(e){}
+if(x.status===200&&r.ok){fill.style.width='100%';m.className='ok';m.textContent='Update OK \u2014 rebooting into the new firmware.';}
+else{m.className='warn';m.textContent='Failed: '+(r.err||('HTTP '+x.status));}};
+x.onerror=function(){m.className='warn';m.textContent='Connection dropped \u2014 if it rebooted, the flash likely succeeded.';};
+var fd=new FormData();fd.append('f',f);x.send(fd);}
 </script></body></html>
 )HTML";

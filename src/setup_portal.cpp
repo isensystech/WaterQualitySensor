@@ -1,5 +1,7 @@
 #include "shared.h"
 #include "portal_page.h"    // big HTML raw string lives here so the .ino preprocessor can't truncate it
+#include <Update.h>         // OTA flash writer (arduino-esp32 core)
+#include <esp_app_desc.h>   // esp_app_get_description() -> running firmware's project_name
 
 // version string lives in shared.h; this fallback keeps the file compiling if that edit is missed
 #ifndef FW_VERSION
@@ -274,6 +276,140 @@ static void handleLogClear() {
   Serial.printf("Logs cleared: %d files\n", removed);
 }
 
+// ---------------- OTA firmware update ----------------
+// Streaming upload to the inactive app slot via Update.h. Validate-before-commit, in order of
+// how decisively each check rejects a wrong file:
+//   1. image magic 0xE9               -> rejects anything that isn't an ESP32 app image (the
+//                                        common fat-finger: a photo/PDF/csv).
+//   2. chip_id == ESP32-C6 (0x000D)   -> rejects a bin built for a different ESP32 variant.
+//   3. app-descriptor magic present   -> rejects a raw/headerless or non-IDF blob.
+//   4. project_name == ours           -> WEAK: the precompiled Arduino core stamps every sketch
+//                                        with "arduino-lib-builder", so this only separates us
+//                                        from non-Arduino (raw ESP-IDF) images, not from another
+//                                        Arduino-ESP32 app. Compared to the running descriptor so
+//                                        it self-adjusts if a future core changes the name.
+// Update.end() additionally verifies the image's appended SHA256, catching truncation/corruption.
+volatile uint32_t g_otaRebootAt = 0;        // read by loop(); armed here after a good flash
+
+static const uint16_t CHIP_ID_C6    = 0x000D;       // ESP_CHIP_ID_ESP32C6 (this project is C6-only)
+static const uint32_t APPDESC_MAGIC = 0xABCD5432;   // esp_app_desc_t.magic_word
+static char    s_otaErr[48]  = "";
+static uint8_t s_otaHead[112];              // bytes [0..111]: image header + app-desc project_name
+static size_t  s_otaHeadLen  = 0;
+static bool    s_otaChecked  = false;
+static size_t  s_otaTotal    = 0;           // expected image size (from ?size=) for the % screen
+static uint8_t s_otaLastPct  = 255;
+
+// Validate the buffered header. err[] gets a short reason on failure. Offsets: esp_image_header_t
+// is 24 B (chip_id @ 12); esp_app_desc_t follows the 8 B segment header at image byte 32, with
+// version @ desc+16 (img 48) and project_name @ desc+48 (img 80).
+static bool otaHeaderOk(const uint8_t *h, size_t n, char *err, size_t errN) {
+  if (n < 112)                { snprintf(err, errN, "image too small");    return false; }
+  if (h[0] != 0xE9)           { snprintf(err, errN, "not an ESP32 image"); return false; }
+  uint16_t chip; memcpy(&chip, h + 12, sizeof(chip));
+  if (chip != CHIP_ID_C6)     { snprintf(err, errN, "wrong chip (id 0x%04X)", chip); return false; }
+  uint32_t magic; memcpy(&magic, h + 32, sizeof(magic));
+  if (magic != APPDESC_MAGIC) { snprintf(err, errN, "no app descriptor"); return false; }
+  char proj[33]; memcpy(proj, h + 80, 32); proj[32] = 0;
+  const esp_app_desc_t *self = esp_app_get_description();
+  if (!self || strncmp(proj, self->project_name, 32) != 0) {
+    snprintf(err, errN, "wrong firmware: %s", proj);
+    return false;
+  }
+  return true;
+}
+
+static void handleOtaUpload() {
+  HTTPUpload &up = server.upload();
+  switch (up.status) {
+    case UPLOAD_FILE_START: {
+      s_otaErr[0] = 0; s_otaHeadLen = 0; s_otaChecked = false; s_otaLastPct = 255;
+      if (g_logging) { strcpy(s_otaErr, "busy logging"); return; }   // never mid-dive
+      s_otaTotal = server.hasArg("size") ? (size_t)server.arg("size").toInt() : 0;
+      size_t budget = s_otaTotal ? s_otaTotal : (size_t)UPDATE_SIZE_UNKNOWN;
+      if (!Update.begin(budget)) { snprintf(s_otaErr, sizeof(s_otaErr), "begin: %s", Update.errorString()); return; }
+      otaScreenBegin();
+      Serial.printf("OTA: start (%u bytes expected)\n", (unsigned)s_otaTotal);
+      break;
+    }
+    case UPLOAD_FILE_WRITE: {
+      if (s_otaErr[0]) return;                       // already failed -> swallow remaining chunks
+      if (!s_otaChecked && s_otaHeadLen < sizeof(s_otaHead)) {   // buffer + validate the header once
+        size_t want = sizeof(s_otaHead) - s_otaHeadLen;
+        size_t take = up.currentSize < want ? up.currentSize : want;
+        memcpy(s_otaHead + s_otaHeadLen, up.buf, take);
+        s_otaHeadLen += take;
+        if (s_otaHeadLen >= sizeof(s_otaHead)) {
+          char e[40]; s_otaChecked = true;
+          if (!otaHeaderOk(s_otaHead, s_otaHeadLen, e, sizeof(e))) {
+            snprintf(s_otaErr, sizeof(s_otaErr), "reject: %s", e); Update.abort(); return;
+          }
+        }
+      }
+      if (Update.write(up.buf, up.currentSize) != up.currentSize) {
+        snprintf(s_otaErr, sizeof(s_otaErr), "write: %s", Update.errorString()); Update.abort(); return;
+      }
+      if (s_otaTotal) {                              // on-device % (loop() is blocked; we drive the screen)
+        uint8_t pct = (uint8_t)((uint64_t)up.totalSize * 100 / s_otaTotal);
+        if (pct != s_otaLastPct) { s_otaLastPct = pct; otaScreenBar(pct); }
+      }
+      break;
+    }
+    case UPLOAD_FILE_END: {
+      if (s_otaErr[0]) return;
+      if (!s_otaChecked)     { strcpy(s_otaErr, "image too small"); Update.abort(); return; }
+      if (!Update.end(true)) { snprintf(s_otaErr, sizeof(s_otaErr), "end: %s", Update.errorString()); return; }
+      Serial.printf("OTA: %u bytes written OK\n", (unsigned)up.totalSize);
+      break;
+    }
+    case UPLOAD_FILE_ABORTED:
+      Update.abort();
+      if (!s_otaErr[0]) strcpy(s_otaErr, "aborted");
+      break;
+  }
+}
+
+// Sent once the whole body is consumed: report result; on success arm the reboot for loop().
+static void handleOtaDone() {
+  bool ok = (s_otaErr[0] == 0) && Update.isFinished() && !Update.hasError();
+  if (ok) {
+    server.send(200, "application/json", "{\"ok\":true}");
+    otaScreenMsg("UPDATE OK", "rebooting...");
+    g_otaRebootAt = millis() + 800;            // let the reply flush, then loop() restarts us
+    Serial.println("OTA: committed, rebooting");
+  } else {
+    const char *why = s_otaErr[0] ? s_otaErr : "update failed";
+    char body[96]; snprintf(body, sizeof(body), "{\"ok\":false,\"err\":\"%s\"}", why);
+    server.send(400, "application/json", body);
+    otaScreenMsg("UPDATE FAILED", why);
+    Serial.printf("OTA: FAILED (%s)\n", why);
+  }
+}
+
+// ---------------- recovery AP (sealed-unit escape hatch) ----------------
+// Minimal upload-only portal reached by the boot-hold-past-CAL gesture. Serves just the recovery
+// page + /api/ota; no sensors, no SD, no captive config -- the last resort to re-flash a unit
+// whose normal firmware boots but misbehaves.
+static void handleRecoveryRoot() { server.send_P(200, "text/html", RECOVERY_PAGE); }
+
+void portalBeginRecovery() {
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  WiFi.softAP("WaterQuality-Logger");
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  delay(100);
+  dns.start(53, "*", apIP);
+  server.on("/api/ota", HTTP_POST, handleOtaDone, handleOtaUpload);
+  server.on("/generate_204", handleRecoveryRoot);
+  server.on("/gen_204", handleRecoveryRoot);
+  server.on("/hotspot-detect.html", handleRecoveryRoot);
+  server.onNotFound(handleRecoveryRoot);        // any path -> the minimal upload page
+  server.begin();
+  s_active = true;
+  Serial.println("RECOVERY AP up: join 'WaterQuality-Logger', open http://192.168.4.1 to re-flash");
+}
+
 void portalBegin() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_AP);
@@ -294,6 +430,7 @@ void portalBegin() {
   server.on("/api/log",    HTTP_GET,  handleLog);
   server.on("/api/logall", HTTP_GET,  handleLogAll);
   server.on("/api/logclear", HTTP_POST, handleLogClear);
+  server.on("/api/ota",    HTTP_POST, handleOtaDone, handleOtaUpload);   // firmware update (file-mule OTA)
   server.on("/generate_204", handle204);                 // Android / ChromeOS
   server.on("/gen_204", handle204);
   server.on("/hotspot-detect.html", handleApple);        // iOS / macOS

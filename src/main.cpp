@@ -27,6 +27,7 @@ static uint32_t g_poiBannerUntil = 0;
 static uint8_t  g_bannerKind = 0;        // 0 = POI logged, 1 = idle acknowledgement
 volatile bool   g_reqCal = false;
 volatile bool   g_uiDirty = false;
+bool            g_recovery = false;      // upload-only recovery AP mode (set at boot, never logs/samples)
 
 // ---- backlight auto-dim state ----
 enum { BL_FULL, BL_FADING, BL_OFF };
@@ -265,6 +266,41 @@ void drawTile(int16_t x, int16_t y, int16_t w, int16_t h,
   tft.setCursor(x + (w - (int)strlen(units) * 6) / 2, y + h - 14); tft.print(units);
 }
 
+// ---------------- OTA progress screens ----------------
+// Drawn from inside the upload handler while loop() is blocked for the whole transfer.
+// Mostly-black (low panel current, brownout-friendly) but legible so the user reads the warning.
+static const int OTA_BX = 14, OTA_BY = 150, OTA_BW = 212, OTA_BH = 22;   // progress-bar frame
+
+void otaScreenBegin() {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextSize(3); tft.setTextColor(g_accent);
+  tft.setCursor(20, 50); tft.print("UPDATING");
+  tft.setTextSize(2); tft.setTextColor(ST77XX_RED);
+  tft.setCursor(8, 92);  tft.print("DO NOT");
+  tft.setCursor(8, 114); tft.print("POWER OFF");
+  tft.drawRoundRect(OTA_BX, OTA_BY, OTA_BW, OTA_BH, 4, COL_BORDER);
+}
+
+void otaScreenBar(uint8_t pct) {
+  if (pct > 100) pct = 100;
+  tft.fillRoundRect(OTA_BX + 2, OTA_BY + 2, ((OTA_BW - 4) * pct) / 100, OTA_BH - 4, 3, g_accent);
+  tft.fillRect(96, OTA_BY + OTA_BH + 10, 60, 18, ST77XX_BLACK);   // clear old %
+  char p[8]; snprintf(p, sizeof(p), "%u%%", pct);
+  tft.setTextSize(2); tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(100, OTA_BY + OTA_BH + 10); tft.print(p);
+}
+
+// Terminal OTA message (success/failure). l2 uses small text so long error strings still fit.
+void otaScreenMsg(const char *l1, const char *l2) {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextSize(2); tft.setTextColor(g_accent);
+  tft.setCursor(10, 60); tft.print(l1);
+  if (l2 && *l2) {
+    tft.setTextSize(1); tft.setTextColor(ST77XX_WHITE);
+    tft.setCursor(10, 96); tft.print(l2);
+  }
+}
+
 // page 0: dive computer  (1 depth hero + ascent/temp + pH/sal)
 static void divePage() {
   tft.fillScreen(ST77XX_BLACK);
@@ -436,11 +472,17 @@ static void thresholdsDefault() {
   deploy.thresh[M_DEPTH] = { NAN,  30.0f, NAN, 40.0f };
 }
 
-// Boot-hold calibration entry, shown on screen with a progress bar. Samples the button
-// across the window and enters cal if it was held LOW for the majority of it -- tolerant
-// of the twist actuator briefly chattering open mid-hold.
-static bool bootHoldForCal() {
-  if (digitalRead(PIN_BUTTON) != LOW) return false;        // not held at power-on -> normal boot
+// Boot-hold twist gesture, shown on screen with a progress bar. Three outcomes from one button:
+//   release during the CAL window      -> BOOT_NORMAL
+//   held through the CAL window, release-> BOOT_CAL
+//   KEEP holding past CAL too           -> BOOT_RECOVERY (upload-only firmware AP)
+// The CAL window samples the button and accepts a majority-LOW hold so the twist actuator can
+// briefly chatter open mid-hold. Recovery is the sealed-unit escape hatch, so it is decided here
+// BEFORE any sensor/SD init -- a faulty driver must never be able to block re-flashing.
+static BootMode bootHoldGesture() {
+  if (digitalRead(PIN_BUTTON) != LOW) return BOOT_NORMAL;  // not held at power-on -> normal boot
+
+  // ---- phase A: CAL window ----
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextSize(2); tft.setTextColor(g_accent);
   tft.setCursor(34, 86); tft.print("HOLD = CAL");
@@ -457,10 +499,32 @@ static bool bootHoldForCal() {
     tft.fillRoundRect(bx + 2, by + 2, ((bw - 4) * pct) / 100, bh - 4, 3, g_accent);
     delay(20);
   }
-  bool want = tot && (lo * 100 / tot >= 60);
-  uint32_t t1 = millis();                                  // drain the held press
-  while (digitalRead(PIN_BUTTON) == LOW && millis() - t1 < 4000) delay(5);
-  return want;
+  if (!(tot && (lo * 100 / tot >= 60))) {                  // released early -> normal boot
+    uint32_t t1 = millis();
+    while (digitalRead(PIN_BUTTON) == LOW && millis() - t1 < 4000) delay(5);   // drain
+    return BOOT_NORMAL;
+  }
+
+  // ---- phase B: keep holding -> RECOVERY, release now -> CAL ----
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextSize(2); tft.setTextColor(ST77XX_RED);
+  tft.setCursor(8, 70);  tft.print("KEEP HOLDING");
+  tft.setTextColor(g_accent);
+  tft.setCursor(8, 98);  tft.print("= RECOVERY");
+  tft.setTextSize(1); tft.setTextColor(COL_LABEL);
+  tft.setCursor(8, 130); tft.print("release now to calibrate");
+  tft.drawRoundRect(bx, by, bw, bh, 4, COL_BORDER);
+
+  uint32_t t2 = millis();
+  while (millis() - t2 < BTN_RECOVERY_MS) {
+    if (digitalRead(PIN_BUTTON) != LOW) return BOOT_CAL;   // let go in the recovery window -> CAL
+    int pct = (int)((millis() - t2) * 100 / BTN_RECOVERY_MS);
+    tft.fillRoundRect(bx + 2, by + 2, ((bw - 4) * pct) / 100, bh - 4, 3, ST77XX_RED);
+    delay(20);
+  }
+  uint32_t t3 = millis();                                  // held the whole window -> recovery
+  while (digitalRead(PIN_BUTTON) == LOW && millis() - t3 < 6000) delay(5);   // drain
+  return BOOT_RECOVERY;
 }
 
 // ---------------- setup ----------------
@@ -478,7 +542,23 @@ void setup() {
   digitalWrite(PIN_TFT_RST, LOW); delay(20); digitalWrite(PIN_TFT_RST, HIGH); delay(150);
   tft.init(240, 320); tft.setRotation(TFT_ROT); tft.fillScreen(ST77XX_BLACK);
 
-  bool wantCal = bootHoldForCal();     // hold actuator at power-on, with on-screen feedback
+  BootMode bm = bootHoldGesture();     // hold actuator at power-on, with on-screen feedback
+
+  if (bm == BOOT_RECOVERY) {           // sealed-unit escape hatch: upload-only firmware AP.
+    g_recovery = true;                 // decided before ANY sensor/SD init so a bad driver can't block it
+    portalBeginRecovery();
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextSize(2); tft.setTextColor(ST77XX_RED);
+    tft.setCursor(10, 18); tft.println("RECOVERY");
+    tft.setTextSize(1); tft.setTextColor(ST77XX_WHITE);
+    tft.setCursor(10, 58); tft.println("Wi-Fi: WaterQuality-Logger");
+    tft.setCursor(10, 76); tft.println("open  192.168.4.1");
+    tft.setCursor(10, 94); tft.println("upload firmware .bin");
+    tft.setTextColor(COL_LABEL);
+    tft.setCursor(10, 120); tft.println("power-cycle to leave");
+    return;                            // loop() services only the upload AP from here
+  }
+  bool wantCal = (bm == BOOT_CAL);
 
   drawStatus("ST7789 OK", wantCal ? "-> CALIBRATE" : "");
   g_sdReady = sdMount();
@@ -542,6 +622,11 @@ static void sampleFinish() {
 }
 
 void loop() {
+  // A finished OTA asks for a reboot here (not inside the handler) so the HTTP reply flushes first.
+  if (g_otaRebootAt && (int32_t)(millis() - g_otaRebootAt) >= 0) { delay(50); ESP.restart(); }
+  // Recovery mode is upload-only: service just the AP (which carries /api/ota); no sampling/UI.
+  if (g_recovery) { portalLoop(); return; }
+
   buttonPoll();
   if (portalActive()) portalLoop();
 

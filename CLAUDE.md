@@ -40,7 +40,8 @@ Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `BAR30_ADDR`, pl
 - **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, backlight PWM + auto-dim,
   sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.7.0`).
+  `FW_VERSION` is defined **canonically here** (currently `0.8.1` — `0.8.0` added OTA, `0.8.1`
+  added the firmware-update HELP topic).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot twist-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
@@ -88,8 +89,10 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
 - **Blank serial monitor** → flip `ARDUINO_USB_CDC_ON_BOOT` to `0` in `platformio.ini`.
 - BlueRobotics MS5837 is pulled from GitHub in `lib_deps` (registry name is unreliable).
 - **OTA brownout risk** → flash writes + WiFi RX draw current; treat OTA like the save path.
-  Keep TX power low (`WIFI_POWER_8_5dBm`), drop the backlight during the write, and never
-  run OTA alongside SD activity (it isn't logging on the surface, so this holds naturally).
+  Keep TX power low (`WIFI_POWER_8_5dBm`) and never run OTA alongside SD activity (it isn't
+  logging on the surface, so this holds naturally). Don't kill the backlight to save current
+  — the user must read the "DON'T POWER OFF" warning; draw a mostly-dark progress screen
+  (low panel current, still legible) instead.
 - **No auto-rollback compiled in** → the stock pioarduino core does not enable
   `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, so a validated-but-buggy image that boots will
   stick. Defences are pre-commit validation (`Update.h` header/size check) + the recovery
@@ -117,5 +120,18 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
   - Decisions still open: client-side hash (bundle a tiny MD5 for `Update.setMD5()` vs rely on
     header validation), whether the recovery AP ships in v1 or a follow-up, and whether to gate
     upload behind a confirmation on the open AP.
+  - **Decisions (resolved + built in v0.8.0):** recovery AP **ships in v1**. Pre-commit validation
+    lives in `otaHeaderOk()` (`setup_portal.cpp`) as a layered header check, strongest first:
+    image magic `0xE9` → **`chip_id == ESP32-C6` (0x000D, image byte 12)** → app-descriptor magic
+    (`0xABCD5432`, byte 32) → `project_name` (byte 80) vs the running image's
+    (`esp_app_get_description()`). **Caveat:** the precompiled Arduino core stamps *every* sketch
+    with `project_name = "arduino-lib-builder"`, so the name check only separates us from
+    non-Arduino (raw ESP-IDF) images — **the chip-id check is the real guard** against a
+    wrong-variant bin. No client-side MD5 (the image's appended SHA256, verified by `Update.end()`,
+    catches truncation/corruption). Upload is gated behind a **simple in-page confirm** on the open AP.
+  - **Implemented surface:** `POST /api/ota` (size via `?size=` query for the on-device % bar),
+    `otaScreenBegin/Bar/Msg()` progress screens, the SETTINGS "Firmware update" card + `otaUpload()`
+    XHR, the 3-way boot gesture `bootHoldGesture()` (release=normal / CAL / keep-holding=recovery),
+    `portalBeginRecovery()` + `RECOVERY_PAGE`, and `g_otaRebootAt`/`g_recovery` wired into `loop()`.
 - **RTC** (DS3231SN) deferred to the next board revision; firmware already scaffolds
   `nowUnix()` / `g_timeSynced` / `g_timeApprox`.
