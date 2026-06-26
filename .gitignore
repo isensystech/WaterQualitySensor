@@ -3,3 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Build artifacts / work builds. Versioned release bins are published as GitHub
+# Release assets (git tag v<ver>), not committed -- see CLAUDE.md "builds".
+builds/

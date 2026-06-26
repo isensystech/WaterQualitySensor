@@ -29,6 +29,7 @@
 
 #define POET_ADDR   0x1F
 #define BAR30_ADDR  0x76   // Blue Robotics BAR30 (MS5837-30BA) I2C address
+#define CELS_ADDR   0x77   // Blue Robotics Celsius (TSYS01) high-accuracy temperature
 
 // ---- Cyclops-7F fluorometer via SparkFun Qwiic ADS1015 (12-bit I2C ADC) ----
 // The Cyclops outputs 0-5 V.  The ADS1015 on a 3.3 V Qwiic bus must NOT see >~3.6 V on an
@@ -64,7 +65,9 @@
 #define DIM_MIN_DEFAULT    10         // default idle-to-dim timeout
 
 // ---------------- firmware version ----------------
-#define FW_VERSION         "0.8.1"
+// 0.8.0 added OTA, 0.8.1 added the firmware-update HELP topic,
+// 0.9.0 added per-sensor enable toggles + I2C auto-detect and the Blue Robotics Celsius (TSYS01).
+#define FW_VERSION         "0.9.0"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.
@@ -103,6 +106,11 @@ struct Deployment {
   uint32_t castNum;
   bool     set;
   uint8_t  accent;             // UI base colour: 0 teal, 1 orange, 2 green, 3 red
+  // per-sensor enable flags. Default to I2C-detected presence on first boot; the portal
+  // lets the user override. A disabled sensor blanks: "--" on screen, empty in the log.
+  bool     poet_en;            // POET multiparameter (pH / ORP / EC / salinity)
+  bool     bar30_en;           // BAR30 depth/pressure/temperature
+  bool     cels_en;            // Blue Robotics Celsius (TSYS01) high-accuracy temperature
   bool     cyc_en;             // Cyclops fluorometer fitted/enabled
   char     cyc_units[8];       // display/log units label, e.g. "ug/L", "NTU", "ppb"
   float    cyc_std;            // known concentration of the calibration standard
@@ -133,6 +141,9 @@ extern volatile bool g_reqCal;    // portal -> request calibration-mode entry
 extern volatile bool g_uiDirty;   // request a run-screen redraw (e.g. after a settings change)
 extern bool      g_cycOk;         // ADS1015 present
 extern float     g_cycV;          // latest Cyclops output voltage (0-5 V, after divider correction)
+extern bool      g_bar30Ok;       // BAR30 (MS5837) initialised / present
+extern bool      g_celsOk;        // Celsius (TSYS01) initialised / present
+extern float     g_celsT;         // latest Celsius temperature (C), NaN when unusable
 
 // time (best-effort until RTC revision)
 extern bool      g_timeSynced, g_timeApprox;
@@ -145,6 +156,7 @@ extern volatile uint32_t g_otaRebootAt; // millis() deadline to ESP.restart() af
 // ---------------- prototypes ----------------
 // main
 bool sdEnsure();
+bool i2cPresent(uint8_t addr);    // I2C ACK probe; used by the portal for live sensor detection
 uint32_t nowUnix();
 void isoTime(uint32_t t, char *out, size_t n);
 void renderRun();

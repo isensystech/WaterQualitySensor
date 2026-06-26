@@ -20,6 +20,13 @@ pio run -t clean              # clean
 - App currently ~60% of a 1.98 MB OTA slot.
 - The OTA app image is `.pio/build/seeed_xiao_esp32c6/firmware.bin` (the app-partition
   image, **not** a merged/factory bin). This is the file the file-mule OTA flow uploads.
+- **Releases are published as GitHub Release assets, not committed.** Both `.pio/` and
+  `builds/` are gitignored; `builds/` is only a local staging dir for the named bins. Cutting a
+  release: build, copy the two products into `builds/` with the names below, tag the commit
+  `v<VER>`, and upload them to a GitHub Release
+  (`gh release create v<VER> builds/firmware-v<VER>.bin builds/WaterQuality-<VER>-flash-at-0x0.bin`):
+  - `firmware-v<VER>.bin` &larr; `firmware.bin` (the **OTA** app image the away team uploads)
+  - `WaterQuality-<VER>-flash-at-0x0.bin` &larr; `firmware.factory.bin` (full USB flash / recovery seed)
 
 ## Hardware
 
@@ -30,18 +37,22 @@ pio run -t clean              # clean
 | Blue Robotics BAR30 (MS5837) | I²C `0x76` | depth/pressure/temp |
 | POET electrochemical sensor | I²C `0x1F` | pH (ISFET), ORP, conductivity, salinity, temp |
 | SparkFun ADS1015 ADC | I²C `0x48` | optional Turner Cyclops-7F fluorometer (0–5 V) |
+| Blue Robotics Celsius (TSYS01) | I²C `0x77` | optional high-accuracy temperature |
 | microSD | SPI | logging |
 | Twist-actuator momentary button | `D0` | **the only physical input** |
 
-Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `BAR30_ADDR`, plus `0x1F`/`0x48` for POET/ADS.
+All four I²C sensors are individually enable-able and auto-detected (see the sensor-management
+roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `BAR30_ADDR`,
+`CELS_ADDR`, plus `0x1F`/`0x48` for POET/ADS.
 
 ## Source layout (`src/`)
 
 - **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, backlight PWM + auto-dim,
   sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.8.1` — `0.8.0` added OTA, `0.8.1`
-  added the firmware-update HELP topic).
+  `FW_VERSION` is defined **canonically here** (currently `0.9.0` — `0.8.0` added OTA, `0.8.1`
+  added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect
+  and the Blue Robotics Celsius (TSYS01) sensor).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot twist-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
@@ -99,6 +110,20 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
   AP gesture. An image that fails to boot *at all* has no software escape — validate hard.
 
 ## Current focus / roadmap
+
+- **Sensor management (done in v0.9.0)** — every I2C sensor (POET `0x1F`, BAR30 `0x76`, Cyclops
+  ADS `0x48`, Blue Robotics Celsius/TSYS01 `0x77`) now has its own SETTINGS card with an enable
+  toggle and a live green/red "detected" frame. Boot does an I2C presence scan **before**
+  `stateLoad()` so an unconfigured sensor defaults to *detected = enabled*; saved user choices
+  override and persist (`poet_en`/`bar30_en`/`cels_en`/`cyc_en` in `state.json`). A disabled (or
+  absent) sensor **blanks independently** (rule 6): `--` on screen, empty CSV columns, grey "off"
+  in the boot self-test instead of red "FAILED". Portal pieces: `GET /api/scan` (re-ping for the
+  "Re-scan sensors" button) and a `det{}` block in `/api/state`. **Celsius** is a small inline
+  TSYS01 driver in `main.cpp` (two-phase like POET — conversion kicked at sample start, read in
+  `sampleFinish()`, so no run-path blocking); it adds a trailing **`cels_T_C`** CSV column and a
+  `# sensors:` provenance line, and the TEMP tile now prefers Celsius → BAR30 → POET (salinity/EC
+  math still uses POET's own temp). **CSV note:** BAR30/POET columns are now blank when those
+  sensors are disabled (previously always numeric) — downstream parsers should treat empty as N/A.
 
 - **OTA (in progress)** — "lone-diver file-mule" path: on the surface, a phone/laptop that
   *already downloaded* `firmware.bin` over the internet joins the logger AP and uploads it;

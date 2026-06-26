@@ -45,6 +45,13 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 .dimrow input[type=range]{flex:1}
 .dimrow input[type=number]{width:88px;flex:none;text-align:center}
 .unit{color:#9aa3c0;font-size:14px}
+.sens{background:#161b30;border:2px solid #2a3252;border-radius:12px;padding:14px;margin:10px 0}
+.sens.found{border-color:#27c93f}.sens.absent{border-color:#ff3b30}
+.sens input[type=checkbox]{width:auto;margin-right:8px;vertical-align:middle}
+.shead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.shead h3{margin:0}
+.det{font-size:12px;font-weight:700;white-space:nowrap}
+.okd{color:#27c93f}.badd{color:#ff3b30}
 </style></head><body>
 <h2>WaterQuality Logger</h2><div class=ver id=ver></div>
 
@@ -110,8 +117,25 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <div class=tg><span>Depth m</span><input class=t id=depth_wlo type=number step=any inputmode=decimal><input class=t id=depth_whi type=number step=any inputmode=decimal><input class=t id=depth_alo type=number step=any inputmode=decimal><input class=t id=depth_ahi type=number step=any inputmode=decimal></div>
 <div class=tg><span>Fluor</span><input class=t id=cyc_wlo type=number step=any inputmode=decimal><input class=t id=cyc_whi type=number step=any inputmode=decimal><input class=t id=cyc_alo type=number step=any inputmode=decimal><input class=t id=cyc_ahi type=number step=any inputmode=decimal></div></div>
 
-<div class=c><h3>Cyclops fluorometer</h3>
-<label><input type=checkbox id=cyc_en style="width:auto;margin-right:8px">Fitted (0-5 V via ADS1015 ADC)</label>
+<div class=c><h3>Sensors</h3>
+<p class=hint>Sensors the logger detects on its I2C bus are enabled automatically. Untick one you're not using and it's left out (screen shows &mdash;, log column blank). A <span class=okd>green</span> frame means detected, <span class=badd>red</span> means not found. Plug a sensor in, then Re-scan.</p>
+<button class=b2 onclick=scanSensors()>Re-scan sensors</button></div>
+
+<div class=sens id=sens_poet>
+<div class=shead><h3>POET multiparameter</h3><span class="det" id=det_poet>&hellip;</span></div>
+<label><input type=checkbox id=poet_en>Enabled &mdash; pH / ORP / EC / salinity (0x1F)</label></div>
+
+<div class=sens id=sens_bar30>
+<div class=shead><h3>BAR30 depth</h3><span class="det" id=det_bar30>&hellip;</span></div>
+<label><input type=checkbox id=bar30_en>Enabled &mdash; pressure / depth / temperature (0x76)</label></div>
+
+<div class=sens id=sens_cels>
+<div class=shead><h3>Blue Robotics Celsius</h3><span class="det" id=det_cels>&hellip;</span></div>
+<label><input type=checkbox id=cels_en>Enabled &mdash; high-accuracy temperature (0x77)</label></div>
+
+<div class=sens id=sens_cyc>
+<div class=shead><h3>Cyclops fluorometer</h3><span class="det" id=det_cyc>&hellip;</span></div>
+<label><input type=checkbox id=cyc_en>Enabled &mdash; 0-5 V via ADS1015 ADC (0x48)</label>
 <label>Units label</label><input id=cyc_u placeholder="ug/L, NTU, ppb...">
 <label>Calibration standard concentration</label><input id=cyc_s type=number step=any inputmode=decimal placeholder="e.g. 100">
 <p class=hint>Set the standard's value, then run the device CAL menu &rarr; "Cyclops (2-pt)" (blank, then standard).</p></div>
@@ -183,13 +207,27 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <li><b>Amber ring</b> = warning, close to a limit.</li>
 <li><b>Solid red</b> = alarm, outside your limit.</li>
 </ul>
-<p>A reading shows <code>--</code> when there's nothing to show yet &mdash; usually the logger isn't in water, or that sensor isn't connected.</p>
+<p>A reading shows <code>--</code> when there's nothing to show yet &mdash; usually the logger isn't in water, or that sensor isn't connected or is switched off under <b>Settings</b>.</p>
 <p><b>The status line</b> along the bottom is a quick health check:</p>
 <p><span class="pill pg">SD</span> card OK &bull; <span class="pill pr">SD!</span> card problem, data may not be saving.</p>
 <p><span class="pill pg">LOG</span> recording &bull; <span class="pill py">IDLE</span> not recording.</p>
 <p><span class="pill pg">t</span> clock set &bull; <span class="pill py">t~</span> approximate &bull; <span class="pill pr">t!</span> no time yet (sync from your phone).</p>
 <p><span class="pill pg">POI:</span> markers this dive &bull; <span class="pill pg">n:</span> readings taken.</p>
 <p><span class="pill pg">WET</span> in water &bull; <span class="pill pr">AIR</span> out of water.</p>
+</div></details>
+
+<details><summary>&#128268; Sensors &mdash; turn them on or off</summary><div class=db>
+<p>The logger carries its sensors on one shared cable, and you choose which are active under <b>SETTINGS &rarr; Sensors</b>. Each one has its own card:</p>
+<ul>
+<li><b>POET</b> &mdash; pH, ORP, conductivity and salinity.</li>
+<li><b>BAR30</b> &mdash; depth, pressure and temperature.</li>
+<li><b>Celsius</b> &mdash; an optional high-accuracy temperature probe. When it's fitted, it becomes the temperature shown on screen.</li>
+<li><b>Cyclops</b> &mdash; the optional fluorometer.</li>
+</ul>
+<p><b>It sets itself up.</b> On power-up the logger checks the cable and <b>switches on every sensor it finds</b>, so usually there's nothing to do. Each card shows a <span class=okd>green</span> frame when that sensor is detected and a <span class=badd>red</span> frame when it isn't &mdash; a quick way to confirm everything's plugged in.</p>
+<p><b>To leave a sensor out</b> &mdash; you're not using it, or you want to silence a faulty one &mdash; untick its box and <b>Save settings</b>. That sensor then shows <code>--</code> on screen and its columns are left blank in the log; nothing else is affected.</p>
+<p><b>Just plugged one in?</b> Tap <b>Re-scan sensors</b>: its frame turns green, tick it if needed, then Save. No reboot required.</p>
+<p>The boot <span class=k>SENSORS</span> screen mirrors this: <span class="pill pg">OK</span> detected &amp; on &bull; <span class="pill pr">FAILED</span> on but not found &bull; <span class="pill">off</span> switched off.</p>
 </div></details>
 
 <details><summary>&#127754; During a dive</summary><div class=db>
@@ -282,7 +320,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <details><summary>&#128679; Troubleshooting</summary><div class=db>
 <table>
 <tr><th>You see&hellip;</th><th>Likely fix</th></tr>
-<tr><td>Readings show <code>--</code></td><td>Not in water (status <span class="pill pr">AIR</span>), or a sensor isn't connected. Submerge it, or check the sensor plug.</td></tr>
+<tr><td>Readings show <code>--</code></td><td>Not in water (status <span class="pill pr">AIR</span>), or that sensor isn't connected or is switched off. Submerge it, check the plug, or re-enable it under <b>Settings &rarr; Sensors</b> (<b>Re-scan</b> to detect it).</td></tr>
 <tr><td><span class="pill pr">SD!</span></td><td>Card problem. Re-seat the microSD or try another card. Data isn't saving until this clears.</td></tr>
 <tr><td><span class="pill pr">t!</span> or <span class="pill py">t~</span></td><td>Clock not set / approximate. Connect your phone and re-sync time on the home screen.</td></tr>
 <tr><td>Tiles turn red</td><td>A reading crossed an alarm limit &mdash; or your limits need adjusting under Settings.</td></tr>
@@ -315,6 +353,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <div class=sp><b>Brain</b><span>Seeed Studio XIAO ESP32-C6 (built-in Wi-Fi).</span></div>
 <div class=sp><b>Water</b><span>POET multiparameter electrochemical sensor &mdash; pH, ORP, conductivity.</span></div>
 <div class=sp><b>Depth</b><span>Blue Robotics BAR30 (MS5837-30BA) pressure/depth.</span></div>
+<div class=sp><b>Temp</b><span>Optional Blue Robotics Celsius (TSYS01) high-accuracy temperature.</span></div>
 <div class=sp><b>Fluorometer</b><span>Optional Cyclops-7F via ADS1015 ADC.</span></div>
 <div class=sp><b>Display</b><span>2.0" ST7789 colour screen with microSD storage.</span></div>
 <div class=sp><b>Control</b><span>A single sealed twist actuator &mdash; the only button.</span></div>
@@ -383,9 +422,13 @@ if(s.notes!=null)id('notes').value=s.notes;
 if(s.gps)id('gps').value=s.gps;
 if(s.wx!=null)id('wx').value=s.wx;
 if(s.accent!=null){id('accent').value=s.accent;applyAccent(s.accent);markSwatch(s.accent);}
+if(s.poet_en!=null)id('poet_en').checked=s.poet_en;
+if(s.bar30_en!=null)id('bar30_en').checked=s.bar30_en;
+if(s.cels_en!=null)id('cels_en').checked=s.cels_en;
 if(s.cyc_en!=null)id('cyc_en').checked=s.cyc_en;
 if(s.cyc_u!=null)id('cyc_u').value=s.cyc_u;
 if(s.cyc_s!=null)id('cyc_s').value=s.cyc_s;
+if(s.det)paintDetect(s.det);
 if(s.dim!=null)setDim(s.dim);
 if(s.thresh)TM.forEach(function(m){var o=s.thresh[m]||{};TB.forEach(function(b){if(o[b]!=null)id(m+'_'+b).value=o[b];});});
 var t=id('ts'),good=(s.synced&&!s.approx);
@@ -394,7 +437,13 @@ else{t.className='warn';t.textContent=(s.approx?'time approximate':'no time set'
 id('synmsg').textContent=(s.approx?"The logger's time is approximate":"The logger has no time set")+' \u2013 sync it from this phone for accurate timestamps.';
 id('synccard').style.display='block';sync();}}
 function loadState(){fetch('/api/state').then(r=>r.json()).then(fillState).catch(e=>{});}
+function setSens(s,ok){var c=id('sens_'+s),d=id('det_'+s);if(!c)return;
+c.classList.remove('found','absent');c.classList.add(ok?'found':'absent');
+d.textContent=ok?'detected':'not found';d.className='det '+(ok?'okd':'badd');}
+function paintDetect(d){if(!d)return;setSens('poet',d.poet);setSens('bar30',d.bar30);setSens('cels',d.cels);setSens('cyc',d.cyc);}
+function scanSensors(){fetch('/api/scan').then(r=>r.json()).then(paintDetect).catch(e=>{});}
 function payload(){return {mission:V('mission'),op:V('op'),site:V('site'),wt:V('wt'),accent:parseInt(V('accent')),gps:parseGps(V('gps')),wx:V('wx'),notes:V('notes'),
+poet_en:id('poet_en').checked,bar30_en:id('bar30_en').checked,cels_en:id('cels_en').checked,
 cyc_en:id('cyc_en').checked,cyc_u:V('cyc_u'),cyc_s:parseFloat(V('cyc_s')),dim:clampDim(V('dim')),thresh:buildThresh()};}
 function commit(m){fetch('/api/deploy',{method:'POST',body:JSON.stringify(payload())}).then(r=>r.text()).then(t=>{ok(m);go('home');}).catch(e=>{ok(m);go('home');});}
 function start(){commit('Mission saved. You can disconnect and dive.');}

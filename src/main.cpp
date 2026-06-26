@@ -6,6 +6,8 @@ MS5837    bar30;
 Adafruit_ADS1015 ads;          // Qwiic ADS1015 for the Cyclops-7F (optional)
 bool      g_cycOk = false;
 float     g_cycV  = 0;
+bool      g_bar30Ok = false, g_celsOk = false;
+float     g_celsT = NAN;            // latest Celsius (TSYS01) temperature; NaN when unusable
 PoetResult g_poet = {0,0,0,0,0};
 bool      g_poetOk = false, g_submerged = false, g_sdReady = false, g_logging = false;
 float     g_P = 0, g_depth = 0, g_barT = 0, g_ascent = 0, g_lastDepth = 0;
@@ -132,6 +134,44 @@ bool poetFetch(PoetResult &o) {
   return true;
 }
 
+// ---------------- Blue Robotics Celsius (TSYS01) high-accuracy temperature, I2C 0x77 ----------------
+// Small inline driver: reset, read 8 PROM calibration words, then each reading is a 5th-order
+// polynomial in the 16-bit ADC count using C[1..5]. Two-phase like POET so the ~10 ms ADC
+// conversion never blocks the run path: celsStartConv() is fired when a sample begins and the
+// result is read ~2.8 s later in sampleFinish() (the POET wait dwarfs the conversion time).
+static uint16_t s_celsC[8];        // PROM calibration words (only C[1..5] feed the polynomial)
+
+static bool celsBegin() {          // reset + read PROM; false if the chip never ACKs
+  Wire.beginTransmission(CELS_ADDR); Wire.write(0x1E);            // reset
+  if (Wire.endTransmission() != 0) return false;
+  delay(10);
+  for (uint8_t i = 0; i < 8; i++) {
+    Wire.beginTransmission(CELS_ADDR); Wire.write(0xA0 + i * 2);  // PROM word address
+    if (Wire.endTransmission() != 0) return false;
+    if (Wire.requestFrom((int)CELS_ADDR, 2) != 2) return false;
+    s_celsC[i] = ((uint16_t)Wire.read() << 8) | Wire.read();
+  }
+  return true;
+}
+
+static void celsStartConv() {      // kick a temperature ADC conversion (result ready in ~10 ms)
+  Wire.beginTransmission(CELS_ADDR); Wire.write(0x48); Wire.endTransmission();
+}
+
+static float celsReadResult() {    // read the last conversion -> degrees C (NaN on bus error)
+  Wire.beginTransmission(CELS_ADDR); Wire.write(0x00);           // ADC read register
+  if (Wire.endTransmission() != 0) return NAN;
+  if (Wire.requestFrom((int)CELS_ADDR, 3) != 3) return NAN;
+  uint32_t raw = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | Wire.read();
+  float a  = (float)(raw / 256);   // 24-bit result -> 16-bit ADC count (TSYS01 datasheet)
+  float a2 = a * a, a3 = a2 * a, a4 = a2 * a2;
+  return  (-2.0f) * (float)s_celsC[1] / 1e21f * a4
+        +  4.0f   * (float)s_celsC[2] / 1e16f * a3
+        + (-2.0f) * (float)s_celsC[3] / 1e11f * a2
+        +  1.0f   * (float)s_celsC[4] / 1e6f  * a
+        + (-1.5f) * (float)s_celsC[5] / 1e2f;
+}
+
 // ---------------- SD ----------------
 static const char *sdTypeName() {
   switch (SD.cardType()) { case CARD_NONE: return "NONE"; case CARD_MMC: return "MMC";
@@ -173,8 +213,11 @@ static void writeMetaHeader() {
   }
   g_logFile.printf("# cal_ph: %s  cal_ec: %s  cal_orp: %s  cal_cyc: %s\n",
                    cal.ph_valid ? "Y" : "N", cal.ec_valid ? "Y" : "N", cal.orp_valid ? "Y" : "N", cal.cyc_valid ? "Y" : "N");
+  g_logFile.printf("# sensors: POET=%s BAR30=%s CELS=%s CYC=%s\n",
+                   deploy.poet_en ? "on" : "off", deploy.bar30_en ? "on" : "off",
+                   deploy.cels_en ? "on" : "off", deploy.cyc_en ? "on" : "off");
   if (deploy.cyc_en) g_logFile.printf("# cyclops_units: %s\n", deploy.cyc_units);
-  g_logFile.println("ms,utc,submerged,poi,P_mbar,depth_m,bar30T_C,poetT_mC,ugs_uV,orp_uV,ec_nA,ec_uV,pH,EC_mScm,sal_PSU,ORP_Eh_mV,cyc_V,cyc_conc");
+  g_logFile.println("ms,utc,submerged,poi,P_mbar,depth_m,bar30T_C,poetT_mC,ugs_uV,orp_uV,ec_nA,ec_uV,pH,EC_mScm,sal_PSU,ORP_Eh_mV,cyc_V,cyc_conc,cels_T_C");
   g_logFile.flush();
 }
 
@@ -192,24 +235,35 @@ static void closeDiveLog() {
 
 static void writeLogRow(bool poi) {
   if (!g_logging || !g_logFile) return;
-  float pH  = phFromUgs(g_poet.ugs_uV, g_poet.temp_mC / 1000.0f);
-  float ec  = conductivity_mS(g_poet.ec_uV, g_poet.ec_nA);
-  float sal = salinityPSU(ec, g_poet.temp_mC / 1000.0f, g_P);
-  float eh  = orpEh_mV(g_poet.orp_uV);
+  // A disabled (or absent) sensor blanks its columns -- empty fields, never a stale/zero number.
+  bool poet = deploy.poet_en  && g_poetOk;
+  bool bar  = deploy.bar30_en && g_bar30Ok;
+  bool cyc  = deploy.cyc_en   && g_cycOk;
+  bool cels = deploy.cels_en  && g_celsOk && !isnan(g_celsT);
+  float pH  = poet ? phFromUgs(g_poet.ugs_uV, g_poet.temp_mC / 1000.0f) : NAN;
+  float ec  = poet ? conductivity_mS(g_poet.ec_uV, g_poet.ec_nA) : NAN;
+  float sal = poet ? salinityPSU(ec, g_poet.temp_mC / 1000.0f, g_P) : NAN;
+  float eh  = poet ? orpEh_mV(g_poet.orp_uV) : NAN;
   char ts[24]; isoTime(nowUnix(), ts, sizeof(ts));
 
-  g_logFile.printf("%lu,%s,%d,%d,%.1f,%.3f,%.2f,%ld,%ld,%ld,%ld,%ld,",
-    (unsigned long)millis(), ts, g_submerged ? 1 : 0, poi ? 1 : 0,
-    g_P, g_depth, g_barT, (long)g_poet.temp_mC, (long)g_poet.ugs_uV,
-    (long)g_poet.orp_uV, (long)g_poet.ec_nA, (long)g_poet.ec_uV);
+  g_logFile.printf("%lu,%s,%d,%d,", (unsigned long)millis(), ts, g_submerged ? 1 : 0, poi ? 1 : 0);
+  // P_mbar,depth_m,bar30T_C
+  if (bar)  g_logFile.printf("%.1f,%.3f,%.2f,", g_P, g_depth, g_barT); else g_logFile.print(",,,");
+  // poetT_mC,ugs_uV,orp_uV,ec_nA,ec_uV
+  if (poet) g_logFile.printf("%ld,%ld,%ld,%ld,%ld,", (long)g_poet.temp_mC, (long)g_poet.ugs_uV,
+            (long)g_poet.orp_uV, (long)g_poet.ec_nA, (long)g_poet.ec_uV);
+  else      g_logFile.print(",,,,,");
+  // pH,EC_mScm,sal_PSU,ORP_Eh_mV (derived from POET; blank when POET off/absent)
   if (isnan(pH))  g_logFile.print(""); else g_logFile.print(pH, 3);  g_logFile.print(',');
   if (isnan(ec))  g_logFile.print(""); else g_logFile.print(ec, 3);  g_logFile.print(',');
   if (isnan(sal)) g_logFile.print(""); else g_logFile.print(sal, 3); g_logFile.print(',');
   if (isnan(eh))  g_logFile.print(""); else g_logFile.print(eh, 1);  g_logFile.print(',');
   // Cyclops: raw volts then calibrated concentration (blank when no ADC / not enabled)
   float cc = cycConc(g_cycV);
-  if (g_cycOk && deploy.cyc_en) g_logFile.print(g_cycV, 4); g_logFile.print(',');
-  if (g_cycOk && deploy.cyc_en && !isnan(cc)) g_logFile.println(cc, 3); else g_logFile.println("");
+  if (cyc) g_logFile.print(g_cycV, 4);              g_logFile.print(',');   // cyc_V
+  if (cyc && !isnan(cc)) g_logFile.print(cc, 3);    g_logFile.print(',');   // cyc_conc
+  if (cels) g_logFile.print(g_celsT, 3);                                    // cels_T_C
+  g_logFile.println();
   g_logFile.flush();
 }
 
@@ -301,11 +355,23 @@ void otaScreenMsg(const char *l1, const char *l2) {
   }
 }
 
+// Displayed water temperature, best source first: the dedicated Celsius sensor (highest
+// accuracy), else BAR30, else POET -- each only when enabled AND present. NaN -> tile shows "--".
+// (Salinity/EC compensation keeps using POET's own temp; this only drives the TEMP tile.)
+static float dispTempC() {
+  if (deploy.cels_en  && g_celsOk  && !isnan(g_celsT)) return g_celsT;
+  if (deploy.bar30_en && g_bar30Ok)                    return g_barT;
+  if (deploy.poet_en  && g_poetOk)                     return g_poet.temp_mC / 1000.0f;
+  return NAN;
+}
+
 // page 0: dive computer  (1 depth hero + ascent/temp + pH/sal)
 static void divePage() {
   tft.fillScreen(ST77XX_BLACK);
-  bool live = g_submerged && g_poetOk;
-  float depth = g_submerged ? g_depth : NAN;
+  bool live = g_submerged && g_poetOk && deploy.poet_en;
+  bool depthOk = deploy.bar30_en && g_bar30Ok;
+  float depth = (g_submerged && depthOk) ? g_depth : NAN;
+  float tC  = dispTempC();
   float ph  = live ? phFromUgs(g_poet.ugs_uV, g_poet.temp_mC / 1000.0f) : NAN;
   float sal = live ? salinityPSU(conductivity_mS(g_poet.ec_uV, g_poet.ec_nA), g_poet.temp_mC / 1000.0f, g_P) : NAN;
   char buf[12];
@@ -326,8 +392,8 @@ static void divePage() {
   }
   drawTile(2, 100, 117, 98, dir, buf, "m/min", aSt, 5);
 
-  snprintf(buf, sizeof(buf), "%.1f", g_barT);
-  drawTile(121, 100, 117, 98, "TEMP", buf, "C", tileState(M_TEMP, g_barT));
+  if (isnan(tC)) strcpy(buf, "--"); else snprintf(buf, sizeof(buf), "%.1f", tC);
+  drawTile(121, 100, 117, 98, "TEMP", buf, "C", tileState(M_TEMP, tC));
 
   if (isnan(ph)) strcpy(buf, "--"); else snprintf(buf, sizeof(buf), "%.2f", ph);
   drawTile(2, 200, 117, 98, "pH", buf, "", tileState(M_PH, ph));
@@ -341,17 +407,18 @@ static void divePage() {
 // page 1: metrics  (2 cols x 3 rows)
 static void waterPage() {
   tft.fillScreen(ST77XX_BLACK);
-  bool live = g_submerged && g_poetOk;
-  float Tc  = live ? g_poet.temp_mC / 1000.0f : NAN;
+  bool live = g_submerged && g_poetOk && deploy.poet_en;
+  float Tc  = live ? g_poet.temp_mC / 1000.0f : NAN;   // POET temp: drives EC/salinity compensation
+  float Td  = dispTempC();                             // displayed temp: Celsius-preferred
   float ecR = live ? conductivity_mS(g_poet.ec_uV, g_poet.ec_nA) : NAN;
   float ph  = live ? phFromUgs(g_poet.ugs_uV, Tc) : NAN;
   float ec  = live ? specCond25_mS(ecR, Tc) : NAN;
   float sal = live ? salinityPSU(ecR, Tc, g_P) : NAN;
   float eh  = live ? orpEh_mV(g_poet.orp_uV) : NAN;
-  float dep = g_submerged ? g_depth : NAN;   // out of water -> "--" (loop handles NaN)
+  float dep = (g_submerged && deploy.bar30_en && g_bar30Ok) ? g_depth : NAN;  // out of water / off -> "--"
 
   struct { const char *lab; MetricId id; float v; const char *un; uint8_t dp; } T[6] = {
-    {"TEMP",  M_TEMP,  Tc,  "C",     1},
+    {"TEMP",  M_TEMP,  Td,  "C",     1},
     {"pH",    M_PH,    ph,  "",      2},
     {"ORP",   M_ORP,   eh,  "mV",    0},
     {"EC",    M_EC,    ec,  "mS/cm", 1},
@@ -429,34 +496,35 @@ static void drawStatus(const char *l1, const char *l2 = "", const char *l3 = "")
 }
 
 // quick I2C presence probe: addresses the device and checks for an ACK.
-static bool i2cPresent(uint8_t addr) {
+// Non-static: the portal calls it for live green/red sensor detection on the SETTINGS page.
+bool i2cPresent(uint8_t addr) {
   Wire.beginTransmission(addr);
   return Wire.endTransmission() == 0;
 }
 
-// Boot self-test: probe each sensor's I2C address and report OK / FAILED on screen.
-// Required sensors (POET, BAR30) read green/red; the optional Cyclops ADC reads
-// green when present, red only if the mission has it enabled but it's missing,
-// otherwise a muted "off" so an un-fitted fluorometer never looks like a fault.
+// Boot self-test: probe each sensor's I2C address and report its state on screen.
+// Each sensor is enabled per the mission (defaulting to whatever was detected): a disabled
+// sensor reads a muted "off", an enabled+present one green "OK", and an enabled-but-missing
+// one red "FAILED" -- so an intentionally-unfitted sensor never looks like a fault.
 static void drawSensorScreen() {
   tft.fillScreen(ST77XX_BLACK);
   tft.setTextSize(2); tft.setTextColor(g_accent);
   tft.setCursor(6, 10); tft.println("SENSORS");
 
-  struct { const char *name; uint8_t addr; bool required; } S[] = {
-    { "POET",  POET_ADDR,  true  },
-    { "BAR30", BAR30_ADDR, true  },
-    { "CYCLOPS", ADS_ADDR, false },
+  struct { const char *name; uint8_t addr; bool en; } S[] = {
+    { "POET",    POET_ADDR,  deploy.poet_en  },
+    { "BAR30",   BAR30_ADDR, deploy.bar30_en },
+    { "CELSIUS", CELS_ADDR,  deploy.cels_en  },
+    { "CYCLOPS", ADS_ADDR,   deploy.cyc_en   },
   };
 
   int y = 52;
   for (auto &s : S) {
     bool ok = i2cPresent(s.addr);
     uint16_t col; const char *stat;
-    if (ok)                 { col = ST77XX_GREEN;  stat = "OK"; }
-    else if (s.required)    { col = ST77XX_RED;    stat = "FAILED"; }
-    else if (deploy.cyc_en) { col = ST77XX_RED;    stat = "FAILED"; }   // declared fitted but absent
-    else                    { col = COL_LABEL;     stat = "off"; }      // optional, not fitted
+    if (!s.en)   { col = COL_LABEL;     stat = "off"; }      // disabled -> never a fault
+    else if (ok) { col = ST77XX_GREEN;  stat = "OK"; }
+    else         { col = ST77XX_RED;    stat = "FAILED"; }   // enabled but absent
     char line[28];
     snprintf(line, sizeof(line), "%s - %s", s.name, stat);
     tft.setTextSize(2); tft.setTextColor(col);
@@ -538,6 +606,16 @@ void setup() {
   Wire.begin(PIN_SDA, PIN_SCL);
   thresholdsDefault();
 
+  // I2C presence scan BEFORE state.json loads, so a never-configured sensor defaults to
+  // "detected = enabled". stateLoad() then layers any saved user override on top, and the
+  // real driver inits below refine these flags to actual init success.
+  g_poetOk  = i2cPresent(POET_ADDR);
+  g_bar30Ok = i2cPresent(BAR30_ADDR);
+  g_cycOk   = i2cPresent(ADS_ADDR);
+  g_celsOk  = i2cPresent(CELS_ADDR);
+  deploy.poet_en = g_poetOk;  deploy.bar30_en = g_bar30Ok;
+  deploy.cyc_en  = g_cycOk;   deploy.cels_en  = g_celsOk;
+
   delay(150); digitalWrite(PIN_TFT_RST, HIGH); pinMode(PIN_TFT_RST, OUTPUT);
   digitalWrite(PIN_TFT_RST, LOW); delay(20); digitalWrite(PIN_TFT_RST, HIGH); delay(150);
   tft.init(240, 320); tft.setRotation(TFT_ROT); tft.fillScreen(ST77XX_BLACK);
@@ -572,14 +650,18 @@ void setup() {
   g_accent = accentColor(deploy.accent);
   delay(900);
 
-  if (bar30.init()) { bar30.setModel(MS5837::MS5837_30BA); bar30.setFluidDensity(997); }
+  g_bar30Ok = bar30.init();
+  if (g_bar30Ok) { bar30.setModel(MS5837::MS5837_30BA); bar30.setFluidDensity(997); }
   else Serial.println("Bar30 init failed");
 
   g_cycOk = ads.begin(ADS_ADDR, &Wire);          // Cyclops ADC (optional)
   if (g_cycOk) { ads.setGain(GAIN_ONE); Serial.println("ADS1015 (Cyclops) ready"); }
   else Serial.println("ADS1015 not found (Cyclops disabled)");
 
-  drawSensorScreen();      // boot self-test: POET / BAR30 / CYCLOPS I2C presence
+  g_celsOk = celsBegin();                        // Blue Robotics Celsius (TSYS01), optional
+  Serial.println(g_celsOk ? "TSYS01 (Celsius) ready" : "TSYS01 not found (Celsius disabled)");
+
+  drawSensorScreen();      // boot self-test: POET / BAR30 / CELSIUS / CYCLOPS I2C presence
   delay(1800);
 
   if (wantCal) { g_mode = MODE_CAL; calBegin(); }
@@ -604,6 +686,7 @@ static void sampleFinish() {
   g_poetOk = poetFetch(g_poet);
   g_submerged = g_poetOk && (g_poet.ec_nA > EC_SUBMERGED_NA);
   if (g_cycOk) g_cycV = ads.computeVolts(ads.readADC_SingleEnded(CYC_ADC_CH)) * CYC_DIVIDER;  // 0-5 V at sensor
+  g_celsT = (deploy.cels_en && g_celsOk) ? celsReadResult() : NAN;   // conversion was kicked at sample start
 
   uint32_t now = millis(); float dt = (now - g_lastSampleMs) / 1000.0f;
   if (dt > 0.1f) g_ascent = (g_depth - g_lastDepth) / dt * 60.0f;
@@ -652,7 +735,12 @@ void loop() {
 
   switch (g_state) {
     case S_IDLE:
-      if (millis() - g_lastSampleMs >= SAMPLE_MS) { if (poetStart()) { g_poetT0 = millis(); g_state = S_POET_WAIT; } }
+      if (millis() - g_lastSampleMs >= SAMPLE_MS) {
+        if (poetStart()) {
+          if (deploy.cels_en && g_celsOk) celsStartConv();   // TSYS01 result read in sampleFinish()
+          g_poetT0 = millis(); g_state = S_POET_WAIT;
+        }
+      }
       break;
     case S_POET_WAIT:
       if (millis() - g_poetT0 >= POET_WAIT_MS) { sampleFinish(); g_state = S_IDLE; }

@@ -57,6 +57,9 @@ void stateSave() {
   d["epoch"]   = g_epoch0 ? (g_epoch0 + (millis() - g_epochAtMillis) / 1000UL) : 0;
   d["cast"]    = deploy.castNum;
   d["accent"]  = deploy.accent;
+  d["poet_en"]  = deploy.poet_en;
+  d["bar30_en"] = deploy.bar30_en;
+  d["cels_en"]  = deploy.cels_en;
   d["cyc_en"]  = deploy.cyc_en;
   d["cyc_u"]   = deploy.cyc_units;
   d["cyc_s"]   = deploy.cyc_std;
@@ -81,6 +84,10 @@ void stateLoad() {
   uint32_t e = d["epoch"] | 0UL;
   deploy.castNum = d["cast"]   | 0UL;
   deploy.accent  = d["accent"] | deploy.accent;
+  // enable flags: saved value wins; absent key keeps the boot-scan default (detected = enabled)
+  deploy.poet_en  = d["poet_en"]  | deploy.poet_en;
+  deploy.bar30_en = d["bar30_en"] | deploy.bar30_en;
+  deploy.cels_en  = d["cels_en"]  | deploy.cels_en;
   deploy.cyc_en  = d["cyc_en"] | deploy.cyc_en;
   if (d["cyc_u"].is<const char *>()) cpy(deploy.cyc_units, sizeof(deploy.cyc_units), d["cyc_u"]);
   deploy.cyc_std = d["cyc_s"] | deploy.cyc_std;
@@ -133,6 +140,9 @@ static void handleState() {
   root["notes"]   = deploy.notes;
   root["wx"]      = deploy.weather;
   root["accent"]  = deploy.accent;
+  root["poet_en"]  = deploy.poet_en;
+  root["bar30_en"] = deploy.bar30_en;
+  root["cels_en"]  = deploy.cels_en;
   root["cyc_en"]  = deploy.cyc_en;
   root["cyc_u"]   = deploy.cyc_units;
   root["cyc_s"]   = deploy.cyc_std;
@@ -140,7 +150,24 @@ static void handleState() {
   char gps[40] = "";
   if (deploy.hasPos) snprintf(gps, sizeof(gps), "%.5f,%.5f", deploy.lat, deploy.lon);
   root["gps"]     = gps;
+  JsonObject det = root["det"].to<JsonObject>();   // live I2C presence -> green/red sensor frames
+  det["poet"]  = i2cPresent(POET_ADDR);
+  det["bar30"] = i2cPresent(BAR30_ADDR);
+  det["cels"]  = i2cPresent(CELS_ADDR);
+  det["cyc"]   = i2cPresent(ADS_ADDR);
   writeThresh(root);
+  String out; serializeJson(d, out);
+  server.send(200, "application/json", out);
+}
+
+// Live I2C presence for the SETTINGS sensor frames -- re-pinged on demand ("Re-scan sensors")
+// so plugging a sensor in and refreshing turns its frame green without a reboot.
+static void handleScan() {
+  JsonDocument d;
+  d["poet"]  = i2cPresent(POET_ADDR);
+  d["bar30"] = i2cPresent(BAR30_ADDR);
+  d["cels"]  = i2cPresent(CELS_ADDR);
+  d["cyc"]   = i2cPresent(ADS_ADDR);
   String out; serializeJson(d, out);
   server.send(200, "application/json", out);
 }
@@ -161,6 +188,9 @@ static void handleDeploy() {
   if (deploy.hasWeather) deploy.airTemp = atof(deploy.weather);
   deploy.accent = (uint8_t)(d["accent"] | (int)deploy.accent);
   if (deploy.accent > 3) deploy.accent = 0;
+  deploy.poet_en  = d["poet_en"]  | deploy.poet_en;
+  deploy.bar30_en = d["bar30_en"] | deploy.bar30_en;
+  deploy.cels_en  = d["cels_en"]  | deploy.cels_en;
   deploy.cyc_en = d["cyc_en"] | deploy.cyc_en;
   cpy(deploy.cyc_units, sizeof(deploy.cyc_units), d["cyc_u"] | "");
   if (d["cyc_s"].is<float>()) deploy.cyc_std = d["cyc_s"].as<float>();   // NaN-safe: only overwrite if present/numeric
@@ -423,6 +453,7 @@ void portalBegin() {
   server.on("/", handleRoot);
   server.on("/api/sync",   HTTP_POST, handleSync);
   server.on("/api/state",  HTTP_GET,  handleState);
+  server.on("/api/scan",   HTTP_GET,  handleScan);
   server.on("/api/deploy", HTTP_POST, handleDeploy);
   server.on("/api/thresh", HTTP_POST, handleThresh);
   server.on("/api/cal",    HTTP_POST, handleCal);
