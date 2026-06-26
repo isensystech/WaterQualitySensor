@@ -1,0 +1,23 @@
+# Normalize line endings: let git decide text files and store them LF in the repo.
+* text=auto eol=lf
+
+# Source & config are explicitly text (LF).
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.c     text eol=lf
+*.ino   text eol=lf
+*.ini   text eol=lf
+*.csv   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# Binary assets — never diff or line-ending-mangle these.
+*.bin   binary
+*.elf   binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
