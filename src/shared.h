@@ -15,7 +15,7 @@
 #include <Adafruit_ADS1X15.h> // Library Manager: "Adafruit ADS1X15"  (for the Qwiic ADS1015)
 
 // ---------------- pins ----------------
-#define PIN_BUTTON  D0   // pressure-safe twist actuator, momentary, active-low (provisional)
+#define PIN_BUTTON  D0   // pressure-safe push button, momentary, active-low (provisional)
 #define PIN_TFT_CS  D1
 #define PIN_SD_CS   D2
 #define PIN_TFT_DC  D3
@@ -54,8 +54,8 @@
 #define C_STD_SEAWATER     42.914     // mS/cm, C(35,15,0) for PSS-78
 
 // ---- screen backlight auto-dim (power saving) ----
-// After dimMinutesEffective() of no twist activity the backlight FADES off over BL_FADE_MS.
-// A twist wakes it (and that first wake-twist is swallowed -- no POI / no page flip).
+// After dimMinutesEffective() of no button activity the backlight FADES off over BL_FADE_MS.
+// A press wakes it (and that first wake-press is swallowed -- no POI / no page flip).
 #define BL_PWM_FREQ        5000U      // Hz -- above any visible flicker
 #define BL_PWM_RES         8          // bits -> duty 0..255
 #define BL_LEVEL_MAX       255        // full-brightness PWM duty
@@ -80,7 +80,7 @@ struct PoetResult { int32_t temp_mC, orp_uV, ugs_uV, ec_nA, ec_uV; };
 
 enum NavEvent { NAV_NONE, NAV_SHORT, NAV_LONG };
 enum AppMode  { MODE_RUN, MODE_CAL };
-enum BootMode { BOOT_NORMAL, BOOT_CAL, BOOT_RECOVERY };   // power-on twist gesture outcome
+enum BootMode { BOOT_NORMAL, BOOT_CAL, BOOT_RECOVERY };   // power-on button gesture outcome
 
 struct CalData {
   bool  ph_valid;  float ph_ugs7_mV, ph_slope, ph_calT;   // pH = 7 + (Ugs-ugs7)/slope

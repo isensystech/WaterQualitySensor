@@ -39,7 +39,7 @@ pio run -t clean              # clean
 | SparkFun ADS1015 ADC | I²C `0x48` | optional Turner Cyclops-7F fluorometer (0–5 V) |
 | Blue Robotics Celsius (TSYS01) | I²C `0x77` | optional high-accuracy temperature |
 | microSD | SPI | logging |
-| Twist-actuator momentary button | `D0` | **the only physical input** |
+| Momentary push button | `D0` | **the only physical input** |
 
 All four I²C sensors are individually enable-able and auto-detected (see the sensor-management
 roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `BAR30_ADDR`,
@@ -54,7 +54,7 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
   added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect
   and the Blue Robotics Celsius (TSYS01) sensor).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
-  and salinity/PSU math. Entered via boot twist-hold or the portal.
+  and salinity/PSU math. Entered via boot button-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
   `/api/*` REST endpoints, `state.json` + `cal.json` persistence.
 - **`portal_page.h`** — the single-page web app (HTML/CSS/JS) as one PROGMEM string.
@@ -72,7 +72,7 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
    OTA-ready** (`otadata` + `app0`/`app1`); OTA needs zero partition change — that is the
    whole reason this layout was committed up front.
 4. **One physical input.** All on-device UI/gestures must work with the single `D0`
-   twist button. No touch, no added buttons.
+   push button. No touch, no added buttons.
 5. **No blocking in the run path.** Use `millis()` state machines, not `delay()`
    (boot/setup is the only place `delay()` is acceptable). The OTA upload is a deliberate,
    bounded exception: `WebServer::handleClient()` blocks for the whole transfer, so

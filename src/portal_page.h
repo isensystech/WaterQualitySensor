@@ -104,7 +104,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <input id=dim type=range min=1 max=240 step=1 value=10 oninput="syncDim('r')">
 <input id=dimn type=number min=1 max=240 step=1 value=10 oninput="syncDim('n')"><span class=unit>min</span>
 </div>
-<p class=hint>Saves battery on long dives. A twist wakes the screen &mdash; that first wake-twist won't drop a marker or flip the page.</p></div>
+<p class=hint>Saves battery on long dives. A press wakes the screen &mdash; that first wake-press won't drop a marker or flip the page.</p></div>
 
 <div class=c><h3>Warning thresholds</h3>
 <p class=hint>Blank = no alarm for that bound. Warn = amber tile, alarm = solid red.</p>
@@ -181,14 +181,14 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <li>Put the logger in the water. It detects the water and <b>starts recording on its own</b> &mdash; no buttons needed.</li>
 <li>When you surface and lift it out, recording <b>stops on its own</b>. Come back here to download your data.</li>
 </ul>
-<p>The only control on the logger itself is the <b>twist actuator</b> (see the next topic).</p>
+<p>The only control on the logger itself is the <b>push button</b> (see the next topic).</p>
 </div></details>
 
-<details><summary>&#127913; The twist control</summary><div class=db>
-<p>There is one control: the twist actuator. It does different things depending on how long you hold it.</p>
+<details><summary>&#127913; The push button</summary><div class=db>
+<p>There is one control: the push button. It does different things depending on how long you hold it.</p>
 <table>
 <tr><th>Action</th><th>What happens</th></tr>
-<tr><td><b>Quick twist</b> (tap)</td><td>Drops a <b>marker</b> (POI &mdash; point of interest) into the log at this exact moment. A blue <span class=k>POI #</span> badge confirms it.</td></tr>
+<tr><td><b>Quick press</b> (tap)</td><td>Drops a <b>marker</b> (POI &mdash; point of interest) into the log at this exact moment. A blue <span class=k>POI #</span> badge confirms it.</td></tr>
 <tr><td><b>Hold &amp; release</b></td><td>Flips between the two screens (<b>DIVE</b> and <b>WATER</b>).</td></tr>
 <tr><td><b>Hold during power-on</b></td><td>Enters <b>Calibration</b> mode (see the Calibration topic).</td></tr>
 </table>
@@ -233,7 +233,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <details><summary>&#127754; During a dive</summary><div class=db>
 <ul>
 <li><b>Recording is automatic.</b> The logger senses when it's underwater, starts a new file, and closes it when you surface.</li>
-<li><b>Mark interesting spots</b> with a quick twist (a fish, a pipe, a colour change). Each marker is saved with its timestamp and all the readings at that instant.</li>
+<li><b>Mark interesting spots</b> with a quick press (a fish, a pipe, a colour change). Each marker is saved with its timestamp and all the readings at that instant.</li>
 <li><b>Watch the ascent number.</b> Coming up too fast turns the rate tile amber, then red. Slow is safer for you <i>and</i> the sensors.</li>
 <li>Wi-Fi switches off once a dive begins (useless underwater, saves battery), so this page isn't reachable mid-dive. It returns on the surface.</li>
 </ul>
@@ -242,7 +242,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 
 <details><summary>&#129514; Calibration &mdash; how &amp; when</summary><div class=db>
 <p>Calibration teaches the logger what known samples read like, so your measurements are accurate. Do it on the bench with the stack out of the housing.</p>
-<p><b>To start:</b> hold the twist control while powering on (or tap the calibration button under Settings). You'll get a step-by-step wizard with a <b>stability bar</b> &mdash; wait for it to settle before capturing. In the wizard, a <b>quick twist captures</b> (or cycles a choice) and a <b>long hold cancels</b> (or selects). When done it saves and restarts on its own.</p>
+<p><b>To start:</b> hold the push button while powering on (or tap the calibration button under Settings). You'll get a step-by-step wizard with a <b>stability bar</b> &mdash; wait for it to settle before capturing. In the wizard, a <b>quick press captures</b> (or cycles a choice) and a <b>long hold cancels</b> (or selects). When done it saves and restarts on its own.</p>
 <p><b>What you can calibrate:</b></p>
 <ul>
 <li><b>pH</b> &mdash; 3-point using buffers <b>4.00, 7.00 and 10.00</b>. Rinse the probe between buffers; capture each when stable.</li>
@@ -282,7 +282,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 </ol>
 <p>The logger checks the file, installs it, and restarts on its own. The screen shows <span class=k>UPDATING</span> with a progress bar; when it finishes it reboots. Rejoin <code>WaterQuality-Logger</code> after about 10&nbsp;seconds and re-open this page &mdash; the version shown at the top should be the new one.</p>
 <div class=danger><b>Don't power the logger off while it says UPDATING.</b> Charge the battery before you start. If an upload fails or is interrupted, the logger simply keeps its <b>old</b> firmware &mdash; just try again.</div>
-<p><b>Safety net (recovery mode):</b> if an update ever leaves the logger misbehaving, hold the twist control while powering on and <b>keep holding past the calibration prompt</b> until the screen reads <span class=k>RECOVERY</span>. That brings up a stripped-down Wi-Fi that does one thing &mdash; re-flash firmware. Join <code>WaterQuality-Logger</code>, open <code>192.168.4.1</code>, upload a known-good <code>.bin</code>. Power-cycle to leave.</p>
+<p><b>Safety net (recovery mode):</b> if an update ever leaves the logger misbehaving, hold the push button while powering on and <b>keep holding past the calibration prompt</b> until the screen reads <span class=k>RECOVERY</span>. That brings up a stripped-down Wi-Fi that does one thing &mdash; re-flash firmware. Join <code>WaterQuality-Logger</code>, open <code>192.168.4.1</code>, upload a known-good <code>.bin</code>. Power-cycle to leave.</p>
 <p class=hint>Only upload firmware meant for <b>this</b> logger. It rejects files that aren't for its chip, but it can't tell two builds made for it apart &mdash; so use the file the team gave you.</p>
 </div></details>
 
@@ -345,7 +345,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <ul>
 <li>Logs <b>temperature, pH (ISFET), ORP, conductivity/salinity and depth</b>, plus an optional <b>Cyclops fluorometer</b>.</li>
 <li><b>Records every dive automatically</b> to a spreadsheet-ready CSV, with operator metadata and per-mission alarm bands.</li>
-<li>Lets you <b>mark points of interest</b> with a twist and set <b>alarm limits</b> that colour the screen.</li>
+<li>Lets you <b>mark points of interest</b> with a press and set <b>alarm limits</b> that colour the screen.</li>
 </ul>
 </div></details>
 
@@ -356,7 +356,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <div class=sp><b>Temp</b><span>Optional Blue Robotics Celsius (TSYS01) high-accuracy temperature.</span></div>
 <div class=sp><b>Fluorometer</b><span>Optional Cyclops-7F via ADS1015 ADC.</span></div>
 <div class=sp><b>Display</b><span>2.0" ST7789 colour screen with microSD storage.</span></div>
-<div class=sp><b>Control</b><span>A single sealed twist actuator &mdash; the only button.</span></div>
+<div class=sp><b>Control</b><span>A single sealed push button &mdash; the only button.</span></div>
 <div class=sp><b>Housing</b><span>Pressure-safe; the stack slides out for charging and bench calibration.</span></div>
 <div class=sp><b>Safety</b><span>Built-in leak detector and buzzer.</span></div>
 </div></details>

@@ -22,14 +22,14 @@ calibration, microSD logging, and wireless (OTA) firmware updates.
 | SparkFun ADS1015 ADC | I²C `0x48` | optional Turner Cyclops-7F fluorometer (0–5 V) |
 | Blue Robotics Celsius (TSYS01) | I²C `0x77` | optional high-accuracy temperature |
 | microSD | SPI | logging |
-| Twist-actuator momentary button | `D0` | **the only physical input** |
+| Momentary push button | `D0` | **the only physical input** |
 
 All four I²C sensors are individually enable-able and auto-detected at boot. A disabled or
 absent sensor blanks independently (`--` on screen, empty CSV column) rather than erroring.
 
 ## Features
 
-- **Single-button UI** — every gesture works with the one `D0` twist button (no touch).
+- **Single-button UI** — every gesture works with the one `D0` push button (no touch).
 - **Submerge-gated logging** — DIVE / DATA run screens; logs `dive*.csv` to microSD.
 - **On-device calibration** — pH (3-pt), EC (1-pt), ORP (1-pt), Cyclops (2-pt), with a
   `callog.csv` audit trail.

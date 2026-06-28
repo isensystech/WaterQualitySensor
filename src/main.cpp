@@ -35,7 +35,7 @@ bool            g_recovery = false;      // upload-only recovery AP mode (set at
 enum { BL_FULL, BL_FADING, BL_OFF };
 static uint8_t  g_blState        = BL_FULL;
 static uint16_t g_blLevel        = BL_LEVEL_MAX;   // current PWM duty (0..BL_LEVEL_MAX)
-static uint32_t g_blLastActivity = 0;              // millis() of last twist (idle timer base)
+static uint32_t g_blLastActivity = 0;              // millis() of last press (idle timer base)
 static uint32_t g_blFadeStart    = 0;              // millis() the fade began
 
 uint16_t accentColor(uint8_t idx) {
@@ -48,8 +48,8 @@ uint16_t accentColor(uint8_t idx) {
 }
 
 // ---------------- backlight auto-dim ----------------
-// Power saver: after dimMinutesEffective() of no twist activity, fade the backlight off.
-// The screen content keeps being rendered underneath; the next twist just wakes it.
+// Power saver: after dimMinutesEffective() of no button activity, fade the backlight off.
+// The screen content keeps being rendered underneath; the next press just wakes it.
 uint16_t dimMinutesEffective() {
   uint16_t m = deploy.dimMinutes;
   if (m < DIM_MIN_MIN || m > DIM_MIN_MAX) return DIM_MIN_DEFAULT;
@@ -71,7 +71,7 @@ void backlightBegin() {
 }
 
 // Restore full brightness and reset the idle timer. Returns true if the screen WAS dimmed/off,
-// so the caller can swallow the waking twist (no POI / no page flip on that first press).
+// so the caller can swallow the waking press (no POI / no page flip on that first press).
 bool backlightWake() {
   bool wasDim = (g_blState != BL_FULL);
   blApply(BL_LEVEL_MAX);
@@ -540,11 +540,11 @@ static void thresholdsDefault() {
   deploy.thresh[M_DEPTH] = { NAN,  30.0f, NAN, 40.0f };
 }
 
-// Boot-hold twist gesture, shown on screen with a progress bar. Three outcomes from one button:
+// Boot-hold button gesture, shown on screen with a progress bar. Three outcomes from one button:
 //   release during the CAL window      -> BOOT_NORMAL
 //   held through the CAL window, release-> BOOT_CAL
 //   KEEP holding past CAL too           -> BOOT_RECOVERY (upload-only firmware AP)
-// The CAL window samples the button and accepts a majority-LOW hold so the twist actuator can
+// The CAL window samples the button and accepts a majority-LOW hold so the push button can
 // briefly chatter open mid-hold. Recovery is the sealed-unit escape hatch, so it is decided here
 // BEFORE any sensor/SD init -- a faulty driver must never be able to block re-flashing.
 static BootMode bootHoldGesture() {
@@ -716,7 +716,7 @@ void loop() {
   NavEvent e = g_nav; g_nav = NAV_NONE;
   if (e != NAV_NONE) {
     if (backlightWake()) {
-      // Screen was dimmed/off: this twist only wakes it -- swallow it (no POI, no page flip).
+      // Screen was dimmed/off: this press only wakes it -- swallow it (no POI, no page flip).
     } else if (g_mode == MODE_CAL) {
       calHandleNav(e);
     } else {
