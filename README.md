@@ -6,8 +6,9 @@ STEM students and educators. Because it is sealed, there is **no USB access in t
 that single constraint shapes most of the design: a single physical input, on-device
 calibration, microSD logging, and wireless (OTA) firmware updates.
 
-> **Current firmware:** `v0.9.0` — per-sensor enable toggles + I²C auto-detect, plus the
-> Blue Robotics Celsius (TSYS01) high-accuracy temperature sensor.
+> **Current firmware:** `v0.9.2` — uncalibrated metric tiles now prompt `CALIBRATE` instead of
+> a bare `--`. (v0.9.1 added in-browser dive-log charts; v0.9.0 added per-sensor enable toggles +
+> I²C auto-detect and the Blue Robotics Celsius (TSYS01) sensor.)
 
 ---
 

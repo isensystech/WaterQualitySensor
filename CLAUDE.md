@@ -51,10 +51,11 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
 - **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, backlight PWM + auto-dim,
   sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.9.1` — `0.8.0` added OTA, `0.8.1`
+  `FW_VERSION` is defined **canonically here** (currently `0.9.2` — `0.8.0` added OTA, `0.8.1`
   added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect
   and the Blue Robotics Celsius (TSYS01) sensor, `0.9.1` added in-browser dive-log charts in the
-  portal Download view).
+  portal Download view, `0.9.2` replaces an uncalibrated POET channel's bare `--` run-screen tile
+  with an amber `CALIBRATE` prompt so divers know the slot is blank because it needs calibrating).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot button-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
@@ -81,8 +82,11 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
    sampling/UI pause for the duration. That is acceptable **only** because OTA is a
    surface, user-initiated, not-logging action — never reachable during a dive.
 6. **Sensor blanking is independent.** ORP (`cal.orp_valid`) and EC/salinity
-   (`cal.ec_valid`) blank separately; uncalibrated → display `--`, log `NaN`. Fix and
-   verify each independently, never as one change.
+   (`cal.ec_valid`) blank separately; uncalibrated → **log `NaN`** and, on screen, an
+   amber `CALIBRATE` prompt when the POET sensor is present+enabled (else a plain `--`).
+   The `CALIBRATE` text is display-only (`blankTile()` in `main.cpp`, v0.9.2) — it must
+   never change what gets logged. Fix and verify each channel independently, never as one
+   change.
 7. **Unified save model.** START MISSION and SETTINGS both POST the full DOM to
    `/api/deploy`; neither wipes the other's fields.
 

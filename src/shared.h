@@ -71,8 +71,9 @@
 // firmware/about labels. Do not hardcode the version anywhere else.
 // 0.8.0 added OTA, 0.8.1 added the firmware-update HELP topic,
 // 0.9.0 added per-sensor enable toggles + I2C auto-detect and the Blue Robotics Celsius (TSYS01),
-// 0.9.1 added in-browser dive-log charts in the portal Download view (client-side SVG small-multiples).
-#define FW_VERSION         "0.9.1"
+// 0.9.1 added in-browser dive-log charts in the portal Download view (client-side SVG small-multiples),
+// 0.9.2 turns an uncalibrated POET channel's blank tile into a "CALIBRATE" prompt (was a bare "--").
+#define FW_VERSION         "0.9.2"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.

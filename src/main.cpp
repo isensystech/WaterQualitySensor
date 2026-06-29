@@ -365,6 +365,16 @@ static float dispTempC() {
   return NAN;
 }
 
+// Decide what a calibration-gated tile shows when its value reads NaN. A POET channel that is
+// present + enabled but not yet calibrated prompts "CALIBRATE" in amber, so a diver knows the
+// slot is blank because that metric needs calibrating -- not because the sensor failed or is off.
+// Anything else (sensor disabled/absent, or simply not yet submerged) stays a neutral "--".
+// Logging is unaffected: an uncalibrated channel still logs NaN (rule 6, independent blanking).
+static TileState blankTile(char *buf, bool calValid) {
+  if (deploy.poet_en && g_poetOk && !calValid) { strcpy(buf, "CALIBRATE"); return T_WARN; }
+  strcpy(buf, "--"); return T_OK;
+}
+
 // page 0: dive computer  (1 depth hero + ascent/temp + pH/sal)
 static void divePage() {
   tft.fillScreen(ST77XX_BLACK);
@@ -395,11 +405,14 @@ static void divePage() {
   if (isnan(tC)) strcpy(buf, "--"); else snprintf(buf, sizeof(buf), "%.1f", tC);
   drawTile(121, 100, 117, 98, "TEMP", buf, "C", tileState(M_TEMP, tC));
 
-  if (isnan(ph)) strcpy(buf, "--"); else snprintf(buf, sizeof(buf), "%.2f", ph);
-  drawTile(2, 200, 117, 98, "pH", buf, "", tileState(M_PH, ph));
+  TileState st;
+  if (isnan(ph)) st = blankTile(buf, cal.ph_valid);
+  else { snprintf(buf, sizeof(buf), "%.2f", ph); st = tileState(M_PH, ph); }
+  drawTile(2, 200, 117, 98, "pH", buf, "", st);
 
-  if (isnan(sal)) strcpy(buf, "--"); else snprintf(buf, sizeof(buf), "%.1f", sal);
-  drawTile(121, 200, 117, 98, "SAL", buf, "PSU", tileState(M_SAL, sal));
+  if (isnan(sal)) st = blankTile(buf, cal.ec_valid);   // salinity rides on the EC calibration
+  else { snprintf(buf, sizeof(buf), "%.1f", sal); st = tileState(M_SAL, sal); }
+  drawTile(121, 200, 117, 98, "SAL", buf, "PSU", st);
 
   footer();
 }
@@ -417,13 +430,15 @@ static void waterPage() {
   float eh  = live ? orpEh_mV(g_poet.orp_uV) : NAN;
   float dep = (g_submerged && deploy.bar30_en && g_bar30Ok) ? g_depth : NAN;  // out of water / off -> "--"
 
-  struct { const char *lab; MetricId id; float v; const char *un; uint8_t dp; } T[6] = {
-    {"TEMP",  M_TEMP,  Td,  "C",     1},
-    {"pH",    M_PH,    ph,  "",      2},
-    {"ORP",   M_ORP,   eh,  "mV",    0},
-    {"EC",    M_EC,    ec,  "mS/cm", 1},
-    {"SAL",   M_SAL,   sal, "PSU",   1},
-    {"DEPTH", M_DEPTH, dep, "m",     1},
+  // calV: does this tile have its calibration? true for metrics that need none (TEMP/DEPTH) so
+  // they never show the prompt; the POET channels carry their own valid flag (EC backs SAL too).
+  struct { const char *lab; MetricId id; float v; const char *un; uint8_t dp; bool calV; } T[6] = {
+    {"TEMP",  M_TEMP,  Td,  "C",     1, true},
+    {"pH",    M_PH,    ph,  "",      2, cal.ph_valid},
+    {"ORP",   M_ORP,   eh,  "mV",    0, cal.orp_valid},
+    {"EC",    M_EC,    ec,  "mS/cm", 1, cal.ec_valid},
+    {"SAL",   M_SAL,   sal, "PSU",   1, cal.ec_valid},
+    {"DEPTH", M_DEPTH, dep, "m",     1, true},
   };
 
   // 6th tile shows the Cyclops fluorometer when fitted (depth still leads the dive page);
@@ -440,9 +455,10 @@ static void waterPage() {
   for (int i = 0; i < 6; i++) {
     int x = gap + (i % 2) * (tw + gap);   // 2 / 121
     int y = top + (i / 2) * (th + gap);   // 2 / 102 / 202
-    if (isnan(T[i].v)) strcpy(buf, "--");
-    else snprintf(buf, sizeof(buf), "%.*f", T[i].dp, T[i].v);
-    drawTile(x, y, tw, th, T[i].lab, buf, T[i].un, tileState(T[i].id, T[i].v));
+    TileState st;
+    if (isnan(T[i].v)) st = blankTile(buf, T[i].calV);
+    else { snprintf(buf, sizeof(buf), "%.*f", T[i].dp, T[i].v); st = tileState(T[i].id, T[i].v); }
+    drawTile(x, y, tw, th, T[i].lab, buf, T[i].un, st);
   }
   footer();
 }
