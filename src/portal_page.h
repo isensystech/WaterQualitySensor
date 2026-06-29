@@ -18,7 +18,7 @@ button{width:100%;padding:14px;border:0;border-radius:10px;font-size:16px;margin
 .tg{display:grid;grid-template-columns:52px 1fr 1fr 1fr 1fr;gap:4px;align-items:center;margin:4px 0}
 .t{padding:8px 4px;font-size:14px;text-align:center}.hint{font-size:12px;color:#9aa3c0;margin:4px 0}
 .view{display:none}.view.on{display:block}.menu button{text-align:left}
-.lg{display:grid;grid-template-columns:24px 1fr auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #2a3252;font-size:14px}
+.lg{display:grid;grid-template-columns:24px 1fr auto auto auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #2a3252;font-size:14px}
 .lg a{color:var(--accent);text-decoration:none;font-weight:600}
 .ver{font-size:12px;color:#9aa3c0;margin-bottom:6px}
 details{background:#161b30;border:1px solid #2a3252;border-radius:12px;margin:10px 0;overflow:hidden}
@@ -52,6 +52,18 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 .shead h3{margin:0}
 .det{font-size:12px;font-weight:700;white-space:nowrap}
 .okd{color:#27c93f}.badd{color:#ff3b30}
+.chdr{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.chdr b{color:var(--accent);font-size:14px;word-break:break-all;flex:1}
+.xbtn{width:auto;margin:0;padding:6px 12px;background:#2a3252;font-size:13px;flex:none}
+.cmeta{font-size:11px;color:#9aa3c0;line-height:1.5;margin:6px 0;border-left:2px solid #2a3252;padding-left:8px}
+.cmeta div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.craw{display:flex;align-items:center;gap:8px;font-size:13px;color:#cdd3e6;margin:10px 0 4px}
+.craw input{width:auto;margin:0}
+.cnote{font-size:11px;color:#efb02a;margin:3px 0}
+.charts svg{width:100%;height:auto;display:block;margin:8px 0;background:#0c1020;border-radius:8px}
+.xax{display:flex;justify-content:space-between;font-size:10px;color:#9aa3c0;padding:0 8px}
+.clegend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#9aa3c0;margin-top:8px}
+.clegend i{display:inline-block;width:12px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
 </style></head><body>
 <h2>WaterQuality Logger</h2><div class=ver id=ver></div>
 
@@ -166,7 +178,8 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <button class=b2 onclick=dlSel()>Download selected</button>
 <button class=b2 onclick="location.href='/api/logall'">Download all (combined)</button>
 <button class=bd onclick=clearLogs()>Clear logs (delete all)</button>
-<p class=hint>"Download selected" saves each file individually (your phone may ask to allow multiple downloads). "Download all" streams every dive into one combined .csv. "Clear logs" permanently deletes every dive file from the card.</p></div>
+<p class=hint>Tap <b>chart</b> on a dive to preview its data here. "Download selected" saves each file individually (your phone may ask to allow multiple downloads). "Download all" streams every dive into one combined .csv. "Clear logs" permanently deletes every dive file from the card.</p></div>
+<div id=chartpanel class=c style="display:none"></div>
 <button class=bk onclick="go('home')">Back</button></div>
 
 <div class=view id=v_help>
@@ -380,6 +393,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <script>
 var TM=['temp','ph','orp','ec','sal','depth','cyc'],TB=['wlo','whi','alo','ahi'];
 var ACC=['#19c3c3','#ffa400','#27c93f','#ff3b30'];
+var LAST_STATE=null,CH=null;   // cached /api/state (thresh bands) + current chart context
 function id(x){return document.getElementById(x);}
 function V(i){return id(i).value;}
 function g(m){id('msg').innerHTML='<p class=warn>'+m+'</p>';}
@@ -412,7 +426,7 @@ fetch('https://api.open-meteo.com/v1/forecast?latitude='+v[0]+'&longitude='+v[1]
 .then(r=>r.json()).then(j=>{id('wx').value=j.current.temperature_2m+'C, '+wmo(j.current.weather_code);}).catch(e=>g('no internet on this device - use an ethernet computer/cellular, or type it'));}
 function cal(){fetch('/api/cal',{method:'POST'}).then(r=>r.text()).then(t=>{ok('Switching device to calibration mode...');}).catch(e=>{});}
 function buildThresh(){var th={};TM.forEach(function(m){var o={};TB.forEach(function(b){var v=id(m+'_'+b).value;if(v!=='')o[b]=parseFloat(v);});if(Object.keys(o).length)th[m]=o;});return th;}
-function fillState(s){if(!s)return;
+function fillState(s){if(!s)return;LAST_STATE=s;
 if(s.ver){id('ver').textContent='firmware '+s.ver;id('aver').textContent='Firmware '+s.ver;var fv=id('fwver');if(fv)fv.textContent=s.ver;}
 if(s.mission!=null)id('mission').value=s.mission;
 if(s.op!=null)id('op').value=s.op;
@@ -452,7 +466,7 @@ function kb(n){return n<1024?n+' B':(n/1024).toFixed(1)+' KB';}
 function loadLogs(){id('loglist').textContent='loading...';
 fetch('/api/logs').then(r=>r.json()).then(function(a){
 if(!a.length){id('loglist').innerHTML='<p>No dive logs yet.</p>';return;}
-var h='';a.forEach(function(f){h+='<div class=lg><input type=checkbox class=lsel value="'+f.n+'"><span>'+f.n+'</span><span>'+kb(f.s)+'</span><a href="/api/log?f='+f.n+'" download>get</a></div>';});
+var h='';a.forEach(function(f){h+='<div class=lg><input type=checkbox class=lsel value="'+f.n+'"><span>'+f.n+'</span><span>'+kb(f.s)+'</span><a href="/api/log?f='+f.n+'" download>get</a><a href="#" onclick="showChart(&#39;'+f.n+'&#39;);return false">chart</a></div>';});
 id('loglist').innerHTML=h;}).catch(e=>{id('loglist').textContent='SD error';});}
 function dlSel(){var s=document.querySelectorAll('.lsel:checked');if(!s.length)return;var i=0;
 (function nxt(){if(i>=s.length)return;var a=document.createElement('a');a.href='/api/log?f='+s[i].value;a.download='';document.body.appendChild(a);a.click();a.remove();i++;setTimeout(nxt,700);})();}
@@ -475,6 +489,105 @@ if(x.status===200&&r.ok){fill.style.width='100%';say('ok','Update OK \u2014 the 
 else{say('warn','Update failed: '+(r.err||('HTTP '+x.status))+'. The logger kept its old firmware.');}};
 x.onerror=function(){say('warn','Connection dropped. If the logger rebooted, the update probably succeeded \u2014 rejoin the Wi-Fi and check the version.');};
 var fd=new FormData();fd.append('f',f);x.send(fd);}
+/* ---- Download-screen CSV charts: client-side SVG small-multiples (no libs, no CDN) ---- */
+var CVW=336,CHH=120,CpadL=44,CpadR=8,CpadT=18,CpadB=14,CpW=CVW-CpadL-CpadR,CpH=CHH-CpadT-CpadB;
+/* default metric charts; temp prefers Celsius -> BAR30 -> POET(milli-C). band = thresh[] key */
+var CSER=[
+{k:'depth',cols:[['depth_m',1]],lab:'Depth',u:'m',col:'#58a6ff',inv:1,band:'depth'},
+{k:'temp',cols:[['cels_T_C',1],['bar30T_C',1],['poetT_mC',0.001]],lab:'Temp',u:'\u00B0C',col:'#ff8c5a',band:'temp'},
+{k:'ph',cols:[['pH',1]],lab:'pH',u:'',col:'#c98bff',band:'ph'},
+{k:'ec',cols:[['EC_mScm',1]],lab:'Conductivity',u:'mS/cm',col:'#5dd6c0',band:'ec'},
+{k:'sal',cols:[['sal_PSU',1]],lab:'Salinity',u:'PSU',col:'#7fd6ff',band:'sal'},
+{k:'orp',cols:[['ORP_Eh_mV',1]],lab:'ORP',u:'mV',col:'#e0c060',band:'orp'},
+{k:'cyc',cols:[['cyc_conc',1]],lab:'Fluorometry',u:'',col:'#6ee07a',band:'cyc',opt:1}];
+/* diagnostic raw channels, hidden behind the "show raw" toggle */
+var CRAW=[
+{col:'P_mbar',lab:'Pressure',u:'mbar'},{col:'ugs_uV',lab:'pH raw (Ugs)',u:'\u00B5V'},
+{col:'orp_uV',lab:'ORP raw',u:'\u00B5V'},{col:'ec_nA',lab:'EC current',u:'nA'},
+{col:'ec_uV',lab:'EC voltage',u:'\u00B5V'},{col:'cyc_V',lab:'Cyclops raw',u:'V'}];
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function Nn(x){return (x==null||x==='')?NaN:+x;}
+function clmp(v,a,b){return v<a?a:(v>b?b:v);}
+function fmtNum(v){var a=Math.abs(v);if(a>=1000)return v.toFixed(0);if(a>=100)return v.toFixed(1);if(a>=1)return v.toFixed(2);return v.toFixed(3);}
+function fmtT(ms){var s=Math.round(ms/1000),m=Math.floor(s/60);s-=m*60;return m+':'+(s<10?'0':'')+s;}
+function parseCsv(t){var L=t.split(/\r?\n/),meta=[],cols=null,rows=[],i,j;
+for(i=0;i<L.length;i++){var ln=L[i];if(ln==='')continue;
+if(ln.charAt(0)==='#'){meta.push(ln.replace(/^#\s?/,''));continue;}
+if(!cols){cols=ln.split(',');continue;}
+var c=ln.split(','),r=new Array(cols.length);for(j=0;j<cols.length;j++)r[j]=Nn(c[j]);rows.push(r);}
+var idx={};if(cols)for(i=0;i<cols.length;i++)idx[cols[i]]=i;
+return {meta:meta,cols:cols||[],rows:rows,idx:idx};}
+/* first column with any data wins (for temp's preference list); empty cell -> NaN gap */
+function seriesPts(P,X,cols){for(var d=0;d<cols.length;d++){var i=P.idx[cols[d][0]];if(i==null)continue;
+var sc=cols[d][1],pts=[],any=false;
+for(var r=0;r<P.rows.length;r++){var v=P.rows[r][i];if(!isNaN(v)){any=true;v*=sc;}pts.push([X[r],v]);}
+if(any)return pts;}return null;}
+/* min/max bucket per x-pixel: an out-of-band spike must survive decimation */
+function decimate(pts,W){if(pts.length<=W*2)return {pts:pts,dec:false};
+var bs=Math.ceil(pts.length/W),out=[];
+for(var i=0;i<pts.length;i+=bs){var hi=Math.min(i+bs,pts.length),mn=Infinity,mx=-Infinity,mnx=0,mxx=0,any=false;
+for(var j=i;j<hi;j++){var y=pts[j][1];if(isNaN(y))continue;any=true;if(y<mn){mn=y;mnx=pts[j][0];}if(y>mx){mx=y;mxx=pts[j][0];}}
+if(!any){out.push([pts[i][0],NaN]);continue;}
+if(mnx<=mxx){out.push([mnx,mn]);if(mxx!==mnx)out.push([mxx,mx]);}else{out.push([mxx,mx]);out.push([mnx,mn]);}}
+return {pts:out,dec:true};}
+function linePath(pts,X,Y){var d='',pen=false;
+for(var i=0;i<pts.length;i++){var y=pts[i][1];if(isNaN(y)){pen=false;continue;}
+d+=(pen?'L':'M')+X(pts[i][0]).toFixed(1)+' '+Y(y).toFixed(1)+' ';pen=true;}return d;}
+function bandRect(loV,hiV,Y,yMin,yMax,fill){loV=clmp(loV,yMin,yMax);hiV=clmp(hiV,yMin,yMax);if(loV>=hiV)return '';
+var y1=Y(hiV),y2=Y(loV),top=Math.min(y1,y2),h=Math.abs(y2-y1);if(h<0.5)return '';
+return '<rect x="'+CpadL+'" y="'+top.toFixed(1)+'" width="'+CpW+'" height="'+h.toFixed(1)+'" fill="'+fill+'" />';}
+/* shade alarm (red) + warn (amber) zones; NaN bound = that bound disabled; clipped to data range */
+function bandSvg(b,Y,yMin,yMax){if(!b)return '';var wlo=Nn(b.wlo),whi=Nn(b.whi),alo=Nn(b.alo),ahi=Nn(b.ahi);
+var R='rgba(255,59,48,.20)',A='rgba(255,164,0,.18)',s='';
+if(!isNaN(ahi))s+=bandRect(ahi,yMax,Y,yMin,yMax,R);
+if(!isNaN(whi))s+=bandRect(whi,isNaN(ahi)?yMax:ahi,Y,yMin,yMax,A);
+if(!isNaN(wlo))s+=bandRect(isNaN(alo)?yMin:alo,wlo,Y,yMin,yMax,A);
+if(!isNaN(alo))s+=bandRect(yMin,alo,Y,yMin,yMax,R);return s;}
+function miniChart(o,xMin,xMax,pois){var yMin=Infinity,yMax=-Infinity,i;
+for(i=0;i<o.pts.length;i++){var y=o.pts[i][1];if(!isNaN(y)){if(y<yMin)yMin=y;if(y>yMax)yMax=y;}}
+if(yMin===Infinity){yMin=0;yMax=1;}if(yMin===yMax){yMin-=1;yMax+=1;}
+var pd=(yMax-yMin)*0.08;yMin-=pd;yMax+=pd;var rng=(yMax-yMin)||1,xr=(xMax-xMin)||1;
+function Y(v){return o.inv?(CpadT+(v-yMin)/rng*CpH):(CpadT+(yMax-v)/rng*CpH);}
+function X(x){return CpadL+(x-xMin)/xr*CpW;}
+var s='<svg viewBox="0 0 '+CVW+' '+CHH+'">';
+s+='<rect x="'+CpadL+'" y="'+CpadT+'" width="'+CpW+'" height="'+CpH+'" fill="none" stroke="#2a3252" />';
+s+=bandSvg(o.band,Y,yMin,yMax);
+for(i=0;i<pois.length;i++){var px=X(pois[i]).toFixed(1);
+s+='<line x1="'+px+'" y1="'+CpadT+'" x2="'+px+'" y2="'+(CpadT+CpH)+'" stroke="#c98bff" stroke-dasharray="3 3" opacity="0.7" />';}
+s+='<path d="'+linePath(o.pts,X,Y)+'" fill="none" stroke="'+o.col+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />';
+s+='<text x="4" y="13" fill="'+o.col+'" font-size="11" font-weight="700">'+esc(o.lab)+(o.u?(' ('+esc(o.u)+')'):'')+'</text>';
+s+='<text x="'+(CpadL-3)+'" y="'+(CpadT+4)+'" fill="#9aa3c0" font-size="9" text-anchor="end">'+fmtNum(o.inv?yMin:yMax)+'</text>';
+s+='<text x="'+(CpadL-3)+'" y="'+(CpadT+CpH)+'" fill="#9aa3c0" font-size="9" text-anchor="end">'+fmtNum(o.inv?yMax:yMin)+'</text>';
+return s+'</svg>';}
+function showChart(name){var P=id('chartpanel');P.style.display='block';
+P.innerHTML='<p class=hint>Loading '+esc(name)+'\u2026</p>';P.scrollIntoView({behavior:'smooth',block:'start'});
+var sp=LAST_STATE?Promise.resolve(LAST_STATE):fetch('/api/state').then(r=>r.json()).then(function(s){LAST_STATE=s;return s;}).catch(function(){return {};});
+Promise.all([fetch('/api/log?f='+encodeURIComponent(name)).then(r=>r.text()),sp])
+.then(function(res){CH={name:name,P:parseCsv(res[0]),st:res[1]||{},raw:false};drawCharts();})
+.catch(function(e){P.innerHTML='<p class=warn>Could not load '+esc(name)+'.</p>';});}
+function drawCharts(){var P=id('chartpanel');if(!CH)return;
+var D=CH.P,th=(CH.st&&CH.st.thresh)||{},cycU=(CH.st&&CH.st.cyc_u)||'',r,c;
+var head='<div class=chdr><b>'+esc(CH.name)+'</b><button class=xbtn onclick="id(&#39;chartpanel&#39;).style.display=&#39;none&#39;">close</button></div>';
+var meta='';for(var m=0;m<D.meta.length;m++)meta+='<div>'+esc(D.meta[m])+'</div>';if(meta)meta='<div class=cmeta>'+meta+'</div>';
+if(!D.rows.length){P.innerHTML=head+meta+'<p class=hint>No data rows logged in this dive yet.</p>';return;}
+var mi=D.idx.ms,pi=D.idx.poi,X=new Array(D.rows.length),pois=[];
+for(r=0;r<D.rows.length;r++){var xv=(mi!=null)?D.rows[r][mi]:NaN;X[r]=isNaN(xv)?r:xv;if(pi!=null&&D.rows[r][pi]===1)pois.push(X[r]);}
+var xMin=X[0],xMax=X[X.length-1];if(!(xMax>xMin))xMax=xMin+1;
+var svg='',skipped=[],dec=false;
+for(c=0;c<CSER.length;c++){var cf=CSER[c],pts=seriesPts(D,X,cf.cols);
+if(!pts){if(!cf.opt)skipped.push(cf.lab);continue;}
+var dd=decimate(pts,CpW);if(dd.dec)dec=true;
+svg+=miniChart({pts:dd.pts,lab:cf.lab,u:(cf.k==='cyc'?(cycU||cf.u):cf.u),col:cf.col,inv:cf.inv,band:th[cf.band]},xMin,xMax,pois);}
+if(CH.raw)for(c=0;c<CRAW.length;c++){var rf=CRAW[c],rpts=seriesPts(D,X,[[rf.col,1]]);if(!rpts)continue;
+var rd=decimate(rpts,CpW);if(rd.dec)dec=true;
+svg+=miniChart({pts:rd.pts,lab:rf.lab,u:rf.u,col:'#9aa3c0'},xMin,xMax,pois);}
+var notes='';if(skipped.length)notes+='<div class=cnote>No data (sensor off or uncalibrated): '+esc(skipped.join(', '))+'.</div>';
+if(dec)notes+='<div class=cnote>Long dive \u2014 min/max decimated to fit; excursions preserved.</div>';
+var rawtog='<label class=craw><input type=checkbox '+(CH.raw?'checked':'')+' onchange="CH.raw=this.checked;drawCharts()">Show raw diagnostic channels</label>';
+var xax=svg?('<div class=xax><span>0:00</span><span>'+fmtT((xMax-xMin)/2)+'</span><span>'+fmtT(xMax-xMin)+'</span></div>'):'';
+var leg=svg?('<div class=clegend><span><i style="background:rgba(255,164,0,.18)"></i>warn</span><span><i style="background:rgba(255,59,48,.20)"></i>alarm</span>'+(pois.length?('<span><i style="background:#c98bff"></i>POI ('+pois.length+')</span>'):'')+'</div>'):'';
+var body=svg?('<div class=charts>'+svg+'</div>'+xax+leg):'<p class=hint>No plottable metrics in this file (sensors off or uncalibrated).</p>';
+P.innerHTML=head+meta+rawtog+notes+body;}
 window.onload=function(){loadState();};
 </script></body></html>
 )HTML";

@@ -22,8 +22,9 @@ pio run -t clean              # clean
   image, **not** a merged/factory bin). This is the file the file-mule OTA flow uploads.
 - **Releases are published as GitHub Release assets, not committed.** Both `.pio/` and
   `builds/` are gitignored; `builds/` is only a local staging dir for the named bins. Cutting a
-  release: build, copy the two products into `builds/` with the names below, tag the commit
-  `v<VER>`, and upload them to a GitHub Release
+  release: **bump `FW_VERSION` in `src/shared.h`** (the single source of truth — the boot screen,
+  `/api/state`, and the portal all derive from it), then build, copy the two products into
+  `builds/` with the names below, tag the commit `v<VER>`, and upload them to a GitHub Release
   (`gh release create v<VER> builds/firmware-v<VER>.bin builds/WaterQuality-<VER>-flash-at-0x0.bin`):
   - `firmware-v<VER>.bin` &larr; `firmware.bin` (the **OTA** app image the away team uploads)
   - `WaterQuality-<VER>-flash-at-0x0.bin` &larr; `firmware.factory.bin` (full USB flash / recovery seed)
@@ -50,9 +51,10 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
 - **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, backlight PWM + auto-dim,
   sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.9.0` — `0.8.0` added OTA, `0.8.1`
+  `FW_VERSION` is defined **canonically here** (currently `0.9.1` — `0.8.0` added OTA, `0.8.1`
   added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect
-  and the Blue Robotics Celsius (TSYS01) sensor).
+  and the Blue Robotics Celsius (TSYS01) sensor, `0.9.1` added in-browser dive-log charts in the
+  portal Download view).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot button-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,

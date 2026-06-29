@@ -3,9 +3,10 @@
 #include <Update.h>         // OTA flash writer (arduino-esp32 core)
 #include <esp_app_desc.h>   // esp_app_get_description() -> running firmware's project_name
 
-// version string lives in shared.h; this fallback keeps the file compiling if that edit is missed
+// FW_VERSION is the single source of truth in shared.h. Fail loud rather than fall back to a
+// stale literal, so a missing include can never silently ship the wrong version string.
 #ifndef FW_VERSION
-#define FW_VERSION "0.7.0"
+#error "FW_VERSION not defined -- include shared.h (it is the single source of truth)"
 #endif
 
 static WebServer  server(80);

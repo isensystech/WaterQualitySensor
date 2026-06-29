@@ -531,6 +531,10 @@ static void drawSensorScreen() {
     tft.setCursor(6, y); tft.println(line);
     y += 32;
   }
+
+  // firmware version footer -- pulled straight from the single source (shared.h FW_VERSION)
+  tft.setTextSize(1); tft.setTextColor(COL_LABEL);
+  tft.setCursor(6, SCR_H - 14); tft.print("firmware v" FW_VERSION);
 }
 
 // safe per-mission defaults; state.json (if present) and the portal override these
