@@ -169,6 +169,16 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <div class=hint id=otamsg></div></div>
 <p class=hint>Download the firmware <code>.bin</code> to this phone first (needs internet), then upload it here over the logger's Wi-Fi. The logger checks the file, flashes itself and reboots &mdash; rejoin <code>WaterQuality-Logger</code> after about 10&nbsp;seconds. <b>Don't power the logger off during the update.</b></p></div>
 
+<div class=c><h3>Splash / branding</h3>
+<label>Splash animation (GIF)</label>
+<input type=file id=splashfile accept="image/gif,.gif">
+<button class=b2 onclick=splashUpload()>Upload splash&hellip;</button>
+<div id=splwrap style="display:none;margin-top:10px">
+<div style="background:#0c1020;border:1px solid #2a3252;border-radius:6px;height:14px;overflow:hidden">
+<div id=splfill style="height:100%;width:0%;background:var(--accent);transition:width .2s"></div></div>
+<div class=hint id=splmsg></div></div>
+<p class=hint>The boot animation. Use a <b>240&times;320 GIF</b> (about 15&nbsp;fps, keep it short). Get the file onto this phone first, then upload it here over the logger's Wi-Fi &mdash; the logger saves it to the SD card and reboots to show it. If it's ever missing or unreadable the logger falls back to its built-in logo. <b>iPhone:</b> open this page in a normal browser at <code>192.168.4.1</code> (not the pop-up that may appear on its own), or the file picker won't work.</p></div>
+
 <button class=b1 onclick=saveSettings()>Save settings</button>
 <button class=bk onclick="go('home')">Back</button></div>
 
@@ -488,6 +498,21 @@ x.onload=function(){var r={};try{r=JSON.parse(x.responseText);}catch(e){}
 if(x.status===200&&r.ok){fill.style.width='100%';say('ok','Update OK \u2014 the logger is rebooting. Rejoin the Wi-Fi in ~10 s, then re-open this page to confirm the version.');}
 else{say('warn','Update failed: '+(r.err||('HTTP '+x.status))+'. The logger kept its old firmware.');}};
 x.onerror=function(){say('warn','Connection dropped. If the logger rebooted, the update probably succeeded \u2014 rejoin the Wi-Fi and check the version.');};
+var fd=new FormData();fd.append('f',f);x.send(fd);}
+/* Splash upload: mirrors otaUpload() but POSTs a GIF to /api/splash (SD write, apply=reboot). */
+function splashUpload(){var f=id('splashfile').files[0];
+var w=id('splwrap'),fill=id('splfill'),m=id('splmsg');
+function say(c,t){w.style.display='block';m.className=c;m.textContent=t;}
+if(!f){say('warn','Choose a .gif file first.');return;}
+if(!/\.gif$/i.test(f.name)){say('warn','That does not look like a .gif file.');return;}
+if(!confirm('Upload "'+f.name+'" ('+kb(f.size)+') as the boot splash?\n\nThe logger will save it and reboot to apply.'))return;
+say('hint','Uploading 0%');fill.style.width='0%';
+var x=new XMLHttpRequest();x.open('POST','/api/splash');
+x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*100);fill.style.width=p+'%';m.textContent='Uploading '+p+'%';}};
+x.onload=function(){var r={};try{r=JSON.parse(x.responseText);}catch(e){}
+if(x.status===200&&r.ok){fill.style.width='100%';say('ok','Splash saved \u2014 the logger is rebooting. Rejoin the Wi-Fi in ~10 s to see the new boot animation.');}
+else{say('warn','Upload failed: '+(r.err||('HTTP '+x.status))+'. The logger kept its old splash.');}};
+x.onerror=function(){say('warn','Connection dropped. If the logger rebooted, the splash was likely saved \u2014 rejoin the Wi-Fi.');};
 var fd=new FormData();fd.append('f',f);x.send(fd);}
 /* ---- Download-screen CSV charts: client-side SVG small-multiples (no libs, no CDN) ---- */
 var CVW=336,CHH=120,CpadL=44,CpadR=8,CpadT=18,CpadB=14,CpW=CVW-CpadL-CpadR,CpH=CHH-CpadT-CpadB;

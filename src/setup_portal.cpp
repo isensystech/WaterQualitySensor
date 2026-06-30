@@ -417,6 +417,85 @@ static void handleOtaDone() {
   }
 }
 
+// ---------------- splash / branding asset upload ----------------
+// Mirrors the OTA upload shape, but writes to the SD card instead of flashing a partition: no
+// Update.h, no slot swap, no validate-before-commit, no brick risk. A corrupt upload's worst case
+// is the GIF won't decode -> the baked-in static logo plays, so no recovery path is needed and the
+// handler is registered in portalBegin() only (recovery has no SD to write to).
+// Atomic-ish swap: stream chunks to /splash.tmp, then rename to /splash.gif ONLY on a clean
+// UPLOAD_FILE_END that also passed the GIF8 magic-byte sniff -- a dropped connection can never
+// replace a good animation with a truncated one. Periodic flush mirrors the state.json save path's
+// brownout mitigation (writing ~1 MB with WiFi up is the same current draw; TX power stays low).
+volatile uint32_t g_splashRebootAt = 0;     // read by loop(); armed here after a good save
+static char   s_splashErr[48]   = "";
+static File   s_splashFile;
+static bool   s_splashMagicOk   = false;    // first 4 bytes are "GIF8"?
+static bool   s_splashSawData   = false;    // any bytes received (magic check ran)?
+static size_t s_splashTotal     = 0;        // bytes written so far
+static size_t s_splashSinceFlush = 0;       // bytes since the last flush (brownout pacing)
+
+static void handleSplashUpload() {
+  HTTPUpload &up = server.upload();
+  switch (up.status) {
+    case UPLOAD_FILE_START: {
+      s_splashErr[0] = 0; s_splashMagicOk = false; s_splashSawData = false;
+      s_splashTotal = 0; s_splashSinceFlush = 0;
+      if (g_logging) { strcpy(s_splashErr, "busy logging"); return; }   // never mid-dive (matches OTA)
+      if (!sdEnsure()) { strcpy(s_splashErr, "no sd card"); return; }
+      if (SD.exists("/splash.tmp")) SD.remove("/splash.tmp");
+      s_splashFile = SD.open("/splash.tmp", FILE_WRITE);
+      if (!s_splashFile) { strcpy(s_splashErr, "cannot open tmp"); return; }
+      Serial.println("splash: upload start");
+      break;
+    }
+    case UPLOAD_FILE_WRITE: {
+      if (s_splashErr[0] || !s_splashFile) return;        // already failed -> swallow remaining chunks
+      if (!s_splashSawData) {                              // sniff GIF8 magic on the very first chunk only
+        s_splashSawData = true;
+        s_splashMagicOk = (up.currentSize >= 4 && memcmp(up.buf, "GIF8", 4) == 0);
+      }
+      if (s_splashFile.write(up.buf, up.currentSize) != up.currentSize) {
+        strcpy(s_splashErr, "sd write failed");
+        s_splashFile.close(); SD.remove("/splash.tmp"); return;
+      }
+      s_splashTotal += up.currentSize; s_splashSinceFlush += up.currentSize;
+      if (s_splashSinceFlush >= 16384) { s_splashFile.flush(); s_splashSinceFlush = 0; }
+      break;
+    }
+    case UPLOAD_FILE_END: {
+      if (!s_splashFile) { if (!s_splashErr[0]) strcpy(s_splashErr, "no file"); return; }
+      s_splashFile.flush(); s_splashFile.close();
+      if (s_splashErr[0])      { SD.remove("/splash.tmp"); return; }
+      if (!s_splashMagicOk)    { strcpy(s_splashErr, "not a GIF"); SD.remove("/splash.tmp"); return; }
+      if (SD.exists("/splash.gif")) SD.remove("/splash.gif");
+      if (!SD.rename("/splash.tmp", "/splash.gif")) {     // promote the temp only once it is complete
+        strcpy(s_splashErr, "rename failed"); SD.remove("/splash.tmp"); return;
+      }
+      Serial.printf("splash: %u bytes saved as /splash.gif\n", (unsigned)s_splashTotal);
+      break;
+    }
+    case UPLOAD_FILE_ABORTED:
+      if (s_splashFile) s_splashFile.close();
+      SD.remove("/splash.tmp");                            // dropped upload leaves the live splash intact
+      if (!s_splashErr[0]) strcpy(s_splashErr, "aborted");
+      break;
+  }
+}
+
+// Sent once the whole body is consumed: mirror handleOtaDone's {ok,err} JSON contract so the
+// card's JS reuses the OTA progress UX. On success arm the deferred reboot for loop() (apply = reboot).
+static void handleSplashDone() {
+  if (s_splashErr[0] == 0) {
+    server.send(200, "application/json", "{\"ok\":true}");
+    g_splashRebootAt = millis() + 800;          // let the reply flush, then loop() restarts us
+    Serial.println("splash: committed, rebooting");
+  } else {
+    char body[96]; snprintf(body, sizeof(body), "{\"ok\":false,\"err\":\"%s\"}", s_splashErr);
+    server.send(400, "application/json", body);
+    Serial.printf("splash: FAILED (%s)\n", s_splashErr);
+  }
+}
+
 // ---------------- recovery AP (sealed-unit escape hatch) ----------------
 // Minimal upload-only portal reached by the boot-hold-past-CAL gesture. Serves just the recovery
 // page + /api/ota; no sensors, no SD, no captive config -- the last resort to re-flash a unit
@@ -463,6 +542,7 @@ void portalBegin() {
   server.on("/api/logall", HTTP_GET,  handleLogAll);
   server.on("/api/logclear", HTTP_POST, handleLogClear);
   server.on("/api/ota",    HTTP_POST, handleOtaDone, handleOtaUpload);   // firmware update (file-mule OTA)
+  server.on("/api/splash", HTTP_POST, handleSplashDone, handleSplashUpload); // boot-splash GIF -> SD (apply=reboot)
   server.on("/generate_204", handle204);                 // Android / ChromeOS
   server.on("/gen_204", handle204);
   server.on("/hotspot-detect.html", handleApple);        // iOS / macOS

@@ -17,7 +17,7 @@ pio run -t clean              # clean
   `platformio/espressif32` platform does **not** support the Arduino framework on the
   ESP32-C6 — do not switch to it.
 - Target board: `seeed_xiao_esp32c6` (4 MB flash, 320 KB RAM, RISC-V).
-- App currently ~63% of the ~1.94 MB OTA app slot (`app0`/`app1`, `0x1F0000` each).
+- App currently ~62% of the ~1.94 MB OTA app slot (`app0`/`app1`, `0x1F0000` each).
 - The OTA app image is `.pio/build/seeed_xiao_esp32c6/firmware.bin` (the app-partition
   image, **not** a merged/factory bin). This is the file the file-mule OTA flow uploads.
 - **Releases are published as GitHub Release assets, not committed.** Both `.pio/` and
@@ -48,22 +48,30 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
 
 ## Source layout (`src/`)
 
-- **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, backlight PWM + auto-dim,
+- **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, boot-splash player (AnimatedGIF
+  `/splash.gif` from SD, one pass + GFX static fallback), backlight PWM + auto-dim,
   sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.9.2` — `0.8.0` added OTA, `0.8.1`
+  `FW_VERSION` is defined **canonically here** (currently `0.9.3` — `0.8.0` added OTA, `0.8.1`
   added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect
   and the Blue Robotics Celsius (TSYS01) sensor, `0.9.1` added in-browser dive-log charts in the
   portal Download view, `0.9.2` replaces an uncalibrated POET channel's bare `--` run-screen tile
-  with an amber `CALIBRATE` prompt so divers know the slot is blank because it needs calibrating).
+  with an amber `CALIBRATE` prompt so divers know the slot is blank because it needs calibrating,
+  `0.9.3` adds the boot-splash player + a SETTINGS "Splash / branding" card that uploads a new GIF
+  over the AP (`/api/splash`, apply = reboot)).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot button-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
-  `/api/*` REST endpoints, `state.json` + `cal.json` persistence.
+  `/api/*` REST endpoints (incl. `/api/ota` firmware + `/api/splash` boot-GIF upload),
+  `state.json` + `cal.json` persistence.
 - **`portal_page.h`** — the single-page web app (HTML/CSS/JS) as one PROGMEM string.
 
+`bitbank2/AnimatedGIF` is pulled into `lib_deps` for the boot-splash decoder (portable C,
+line-by-line draw callback — no full framebuffer, fits the C6).
+
 SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibration),
-`dive*.csv` (logs), `callog.csv` (calibration audit log).
+`dive*.csv` (logs), `callog.csv` (calibration audit log), `splash.gif` (boot animation,
+optional — absent → built-in static logo).
 
 ## Hard rules — do not break these
 
@@ -77,10 +85,12 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
 4. **One physical input.** All on-device UI/gestures must work with the single `D0`
    push button. No touch, no added buttons.
 5. **No blocking in the run path.** Use `millis()` state machines, not `delay()`
-   (boot/setup is the only place `delay()` is acceptable). The OTA upload is a deliberate,
-   bounded exception: `WebServer::handleClient()` blocks for the whole transfer, so
-   sampling/UI pause for the duration. That is acceptable **only** because OTA is a
-   surface, user-initiated, not-logging action — never reachable during a dive.
+   (boot/setup is the only place `delay()` is acceptable). The OTA upload **and the
+   `/api/splash` upload** are deliberate, bounded exceptions: `WebServer::handleClient()`
+   blocks for the whole transfer, so sampling/UI pause for the duration. Acceptable **only**
+   because both are surface, user-initiated, not-logging actions — never reachable during a
+   dive. (The boot-splash *playback* also blocks, but that runs in `setup()`, where blocking
+   is already allowed.)
 6. **Sensor blanking is independent.** ORP (`cal.orp_valid`) and EC/salinity
    (`cal.ec_valid`) blank separately; uncalibrated → **log `NaN`** and, on screen, an
    amber `CALIBRATE` prompt when the POET sensor is present+enabled (else a plain `--`).
@@ -117,8 +127,8 @@ SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibrati
 
 ## Feature notes & roadmap
 
-The two big subsystems below are **shipped** (v0.8.x OTA, v0.9.0 sensor management); the notes
-stay here because they document non-obvious design choices. RTC is the only open roadmap item.
+The subsystems below are **shipped** (v0.8.x OTA, v0.9.0 sensor management, v0.9.3 boot splash);
+the notes stay here because they document non-obvious design choices. RTC is the only open roadmap item.
 
 - **Sensor management (done in v0.9.0)** — every I2C sensor (POET `0x1F`, BAR30 `0x76`, Cyclops
   ADS `0x48`, Blue Robotics Celsius/TSYS01 `0x77`) now has its own SETTINGS card with an enable
@@ -165,5 +175,31 @@ stay here because they document non-obvious design choices. RTC is the only open
     sensor or SD init, so a bad driver can't block it. `portalBeginRecovery()` brings up a
     minimal upload-only AP (`RECOVERY_PAGE` + `/api/ota` only) to re-flash a unit whose normal
     firmware boots but misbehaves; `g_recovery` makes `loop()` service just the AP.
+- **Boot splash (shipped v0.9.3)** — at boot the unit plays `/splash.gif` from SD **one pass**
+  then hands off to the sensor self-test. Built on `bitbank2/AnimatedGIF`: the file is decoded
+  **line-by-line** (SD file callbacks `gifOpen/Close/Read/Seek`, no full framebuffer) and each
+  scanline is converted to RGB565 (`GIF_PALETTE_RGB565_LE`) and window-written to the ST7789 in
+  `gifDraw()` — transparency runs and disposal==2 are honored. The GIF's infinite-loop flag is
+  **ignored** (`while (playFrame(true,&d))` stops after the last frame, which is held as the
+  handoff image). The `AnimatedGIF` object is heap-allocated for the play then freed, so it costs
+  no RAM during a dive. No SD / missing / unreadable file → `drawSplashFallback()`, a GFX-drawn
+  ripple mark + "WATER QUALITY LOGGER" wordmark (**no baked bitmap** — drawn text instead of the
+  animation is itself the missing-SD diagnostic). Blocking play is fine here (boot is the rule-5
+  exception). Delivery is a **file upload to SD, not a flash OTA** — none of the `Update.h` /
+  slot-swap / validate-before-commit / recovery-AP machinery applies; worst case a corrupt file
+  just falls back to the static logo, so no recovery path is needed.
+  - **`POST /api/splash`** in `setup_portal.cpp` mirrors the OTA handler shape but feeds chunks to
+    a `File` write instead of `Update.write()`: stream to `/splash.tmp`, sniff the `GIF8` magic on
+    the first bytes, flush every ~16 KB (brownout pacing, like the `state.json` save), and on a
+    clean `UPLOAD_FILE_END` **rename `/splash.tmp` → `/splash.gif`** (atomic-ish — a dropped upload
+    leaves the live splash intact). `{ok,err}` JSON reply mirrors `handleOtaDone`. Apply = reboot:
+    arms `g_splashRebootAt` (≈800 ms) and `loop()` restarts after the reply flushes. Registered in
+    `portalBegin()` **only** — NOT `portalBeginRecovery()` (recovery has no SD to write to).
+  - **"Splash / branding" card** in the SETTINGS view of `portal_page.h` (HTML+JS stays there) —
+    `splashfile` picker + `splashUpload()` `XMLHttpRequest` reusing the OTA progress UX, an iOS
+    "use the full browser, not the CNA popup" hint, and "rebooting…" messaging. Open AP, in-page
+    confirm. Get the GIF onto the phone first (cache-then-upload — SoftAP↔internet exclusivity).
+  - **Asset target:** a 240×320 portrait GIF, ~15 fps, short. Kept *off* the repo and *off* flash
+    (it lives on the SD card); the static fallback is the only baked-in branding.
 - **RTC** (DS3231SN) deferred to the next board revision; firmware already scaffolds
   `nowUnix()` / `g_timeSynced` / `g_timeApprox`.

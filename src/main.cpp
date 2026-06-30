@@ -1,4 +1,5 @@
 #include "shared.h"
+#include <AnimatedGIF.h>    // bitbank2: line-by-line GIF decoder for the boot splash (no full framebuffer)
 
 // ---------------- global definitions ----------------
 Adafruit_ST7789 tft(PIN_TFT_CS, PIN_TFT_DC, PIN_TFT_RST);
@@ -560,6 +561,117 @@ static void thresholdsDefault() {
   deploy.thresh[M_DEPTH] = { NAN,  30.0f, NAN, 40.0f };
 }
 
+// ---------------- boot splash (AnimatedGIF from SD, one pass) ----------------
+// Plays /splash.gif once at boot then hands off to the sensor self-test. Decodes line-by-line
+// straight from the SD file (no full framebuffer) and blits each scanline to the ST7789 as a
+// windowed write. No SD / missing file / open failure -> the GFX-drawn static fallback below,
+// which doubles as a diagnostic: drawn text instead of Kate's animation means the SD or the
+// splash file is missing. Boot is the one place blocking is allowed (CLAUDE.md rule 5).
+#define SPLASH_PATH "/splash.gif"
+
+static File s_gifFile;                       // backing handle for the AnimatedGIF file callbacks
+
+static void *gifOpen(const char *fname, int32_t *pSize) {
+  s_gifFile = SD.open(fname, FILE_READ);
+  if (!s_gifFile) return nullptr;
+  *pSize = (int32_t)s_gifFile.size();
+  return (void *)&s_gifFile;
+}
+static void gifClose(void *handle) {
+  File *f = (File *)handle;
+  if (f && *f) f->close();
+}
+static int32_t gifRead(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
+  File *f = (File *)pFile->fHandle;
+  return f ? (int32_t)f->read(pBuf, iLen) : 0;
+}
+static int32_t gifSeek(GIFFILE *pFile, int32_t iPosition) {
+  File *f = (File *)pFile->fHandle;
+  if (f) f->seek((uint32_t)iPosition);
+  return iPosition;
+}
+
+// Per-scanline blit: convert the decoded line's palette indices to RGB565 and window-write it.
+// Honors GIF transparency (skip unchanged pixels) and disposal==2 (transparent -> background).
+static void gifDraw(GIFDRAW *pDraw) {
+  static uint16_t line[SCR_W];
+  uint8_t  *s   = pDraw->pPixels;
+  uint16_t *pal = pDraw->pPalette;                 // RGB565 little-endian (begin(GIF_PALETTE_RGB565_LE))
+  int y = pDraw->iY + pDraw->y;
+  if (y < 0 || y >= SCR_H) return;
+  int w = pDraw->iWidth;
+  if (pDraw->iX + w > SCR_W) w = SCR_W - pDraw->iX;
+  if (w <= 0) return;
+
+  if (pDraw->ucDisposalMethod == 2) {              // restore-to-background: paint transparent as bg
+    for (int x = 0; x < w; x++) if (s[x] == pDraw->ucTransparent) s[x] = pDraw->ucBackground;
+    pDraw->ucHasTransparency = 0;
+  }
+
+  if (pDraw->ucHasTransparency) {                  // draw only opaque runs, leave gaps untouched
+    uint8_t tr = pDraw->ucTransparent;
+    int x = 0;
+    while (x < w) {
+      int run = 0;
+      while (x + run < w && s[x + run] != tr) { line[run] = pal[s[x + run]]; run++; }
+      if (run) {
+        tft.startWrite();
+        tft.setAddrWindow(pDraw->iX + x, y, run, 1);
+        tft.writePixels(line, run);
+        tft.endWrite();
+        x += run;
+      }
+      while (x < w && s[x] == tr) x++;             // skip the transparent run
+    }
+  } else {                                         // opaque line: one windowed write
+    for (int x = 0; x < w; x++) line[x] = pal[s[x]];
+    tft.startWrite();
+    tft.setAddrWindow(pDraw->iX, y, w, 1);
+    tft.writePixels(line, w);
+    tft.endWrite();
+  }
+}
+
+// Static fallback (GFX primitives, no baked bitmap): a ripple/koru mark + wordmark. Drawn when
+// the GIF is absent or won't open, so a blank-SD unit boots to legible branding + a hint instead
+// of a black screen -- and so a missing splash is instantly distinguishable from a successful play.
+static void drawSplashFallback() {
+  tft.fillScreen(ST77XX_BLACK);
+  const int cx = SCR_W / 2, cy = 116;
+  for (int r = 46; r >= 10; r -= 12) tft.drawCircle(cx, cy, r, g_accent);   // concentric ripples
+  tft.fillCircle(cx, cy, 5, g_accent);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setTextSize(2);
+  const char *l1 = "WATER QUALITY", *l2 = "LOGGER";
+  tft.setCursor((SCR_W - (int)strlen(l1) * 12) / 2, 196); tft.print(l1);
+  tft.setCursor((SCR_W - (int)strlen(l2) * 12) / 2, 224); tft.print(l2);
+  tft.setTextSize(1); tft.setTextColor(COL_LABEL);
+  const char *l3 = "firmware v" FW_VERSION;
+  tft.setCursor((SCR_W - (int)strlen(l3) * 6) / 2, 262); tft.print(l3);
+}
+
+// Play the splash GIF one full pass (ignoring the GIF's loop flag), leaving the final frame on
+// screen as the handoff image. Returns false (caller draws the fallback) if there is nothing to play.
+static bool playSplashGif() {
+  if (!g_sdReady || !SD.exists(SPLASH_PATH)) return false;
+  AnimatedGIF *gif = new AnimatedGIF();          // ~kB-scale object on the heap (freed before the dive)
+  if (!gif) return false;
+  bool played = false;
+  gif->begin(GIF_PALETTE_RGB565_LE);
+  if (gif->open(SPLASH_PATH, gifOpen, gifClose, gifRead, gifSeek, gifDraw)) {
+    int delayMs = 0;
+    while (gif->playFrame(true, &delayMs)) yield();   // bSync paces each frame; stop after one pass
+    gif->close();
+    played = true;
+  }
+  delete gif;
+  return played;
+}
+
+static void bootSplash() {
+  if (!playSplashGif()) drawSplashFallback();
+}
+
 // Boot-hold button gesture, shown on screen with a progress bar. Three outcomes from one button:
 //   release during the CAL window      -> BOOT_NORMAL
 //   held through the CAL window, release-> BOOT_CAL
@@ -681,6 +793,7 @@ void setup() {
   g_celsOk = celsBegin();                        // Blue Robotics Celsius (TSYS01), optional
   Serial.println(g_celsOk ? "TSYS01 (Celsius) ready" : "TSYS01 not found (Celsius disabled)");
 
+  bootSplash();            // play /splash.gif from SD (one pass), else the GFX static fallback
   drawSensorScreen();      // boot self-test: POET / BAR30 / CELSIUS / CYCLOPS I2C presence
   delay(1800);
 
@@ -725,8 +838,10 @@ static void sampleFinish() {
 }
 
 void loop() {
-  // A finished OTA asks for a reboot here (not inside the handler) so the HTTP reply flushes first.
-  if (g_otaRebootAt && (int32_t)(millis() - g_otaRebootAt) >= 0) { delay(50); ESP.restart(); }
+  // A finished OTA / splash upload asks for a reboot here (not inside the handler) so the HTTP
+  // reply flushes first. Both arm a millis() deadline; loop() restarts once it passes.
+  if (g_otaRebootAt    && (int32_t)(millis() - g_otaRebootAt)    >= 0) { delay(50); ESP.restart(); }
+  if (g_splashRebootAt && (int32_t)(millis() - g_splashRebootAt) >= 0) { delay(50); ESP.restart(); }
   // Recovery mode is upload-only: service just the AP (which carries /api/ota); no sampling/UI.
   if (g_recovery) { portalLoop(); return; }
 

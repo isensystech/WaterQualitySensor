@@ -72,8 +72,10 @@
 // 0.8.0 added OTA, 0.8.1 added the firmware-update HELP topic,
 // 0.9.0 added per-sensor enable toggles + I2C auto-detect and the Blue Robotics Celsius (TSYS01),
 // 0.9.1 added in-browser dive-log charts in the portal Download view (client-side SVG small-multiples),
-// 0.9.2 turns an uncalibrated POET channel's blank tile into a "CALIBRATE" prompt (was a bare "--").
-#define FW_VERSION         "0.9.2"
+// 0.9.2 turns an uncalibrated POET channel's blank tile into a "CALIBRATE" prompt (was a bare "--"),
+// 0.9.3 adds the boot-splash player (AnimatedGIF /splash.gif from SD, one pass -> GFX static fallback)
+//       and a SETTINGS "Splash / branding" card that uploads a new GIF over the AP (/api/splash, apply=reboot).
+#define FW_VERSION         "0.9.3"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.
@@ -158,6 +160,7 @@ extern uint32_t  g_epoch0, g_epochAtMillis;
 // OTA / firmware recovery
 extern bool             g_recovery;     // true => boot came up in upload-only recovery AP mode
 extern volatile uint32_t g_otaRebootAt; // millis() deadline to ESP.restart() after a good OTA (0 = none)
+extern volatile uint32_t g_splashRebootAt; // same pattern after a good /api/splash upload (apply = reboot)
 
 // ---------------- prototypes ----------------
 // main
