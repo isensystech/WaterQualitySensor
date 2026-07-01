@@ -37,3 +37,4 @@ Desktop.ini
 *.tmp
 *.log
 *.zip
+.dev_docs/*

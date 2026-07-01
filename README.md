@@ -1,14 +1,16 @@
 # Dive WaterQuality Logger
 
-Firmware for a dive-deployable water-quality logger, built by **iSENSYS** for client
-**Fieldwerx**. The unit is a watertight-sealed tube carried underwater by divers and used by
-STEM students and educators. Because it is sealed, there is **no USB access in the field** —
-that single constraint shapes most of the design: a single physical input, on-device
-calibration, microSD logging, and wireless (OTA) firmware updates.
+A **dive-deployable water-quality logger** — a watertight, sealed instrument that divers carry
+underwater to sample and record water conditions in real time. The tube never opens in the field,
+so there is **no USB access**: everything runs from a single push button, an on-screen UI, and a
+wireless setup portal. Calibration, mission setup, data offload, and even firmware updates all
+happen without breaking the seal.
 
-> **Current firmware:** `v0.9.2` — uncalibrated metric tiles now prompt `CALIBRATE` instead of
-> a bare `--`. (v0.9.1 added in-browser dive-log charts; v0.9.0 added per-sensor enable toggles +
-> I²C auto-detect and the Blue Robotics Celsius (TSYS01) sensor.)
+The logger measures **depth, pressure, and temperature** alongside a full electrochemical suite —
+**pH, ORP, conductivity, and salinity** — with an optional fluorometer channel and high-accuracy
+temperature sensor. Readings show live on a 2.0" color display and log to microSD as CSV, so a
+dive's data comes home on the card. Every I²C sensor is individually enable-able and auto-detected
+at boot, and each channel blanks independently when it is absent or still needs calibrating.
 
 ---
 
