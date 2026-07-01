@@ -1,3 +1,5 @@
+<img width="2048" height="1152" alt="image" src="https://github.com/user-attachments/assets/8744f278-d714-4260-a1d6-3ebd749c9bd5" />
+
 # Dive WaterQuality Logger
 
 A **dive-deployable water-quality logger** — a watertight, sealed instrument that divers carry
