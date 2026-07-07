@@ -1,4 +1,4 @@
-<img width="2048" height="1152" alt="image" src="https://github.com/user-attachments/assets/8744f278-d714-4260-a1d6-3ebd749c9bd5" />
+<img width="1920" height="1080" alt="Frame 1" src="https://github.com/user-attachments/assets/256ee78b-27e7-47b8-af31-f085864ad601" />
 
 # Dive WaterQuality Logger
 
