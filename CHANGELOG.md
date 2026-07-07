@@ -4,6 +4,40 @@ All notable changes to the Dive WaterQuality Logger firmware are documented here
 Versions track `FW_VERSION` in [`src/shared.h`](src/shared.h) — the single source of truth.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.9.4] — 2026-07-07
+
+### Fixed
+- **Boot-splash animation never played past the first frame** (and, on many real GIFs, hung the
+  boot on a black screen). Root cause: the `gifRead`/`gifSeek` SD callbacks did not maintain
+  `GIFFile.iPos`. AnimatedGIF **requires the callbacks to advance it** (its own built-in file
+  callbacks do), so `iPos` stayed `0` and every frame after the first was re-parsed as the start of
+  the file — frame 2 read mid-file bytes, failed the `GIF89` magic check, and returned
+  `GIF_BAD_FILE`. Fixed by advancing `iPos` in both callbacks. Multi-frame splashes now play fully.
+- **A malformed or trailing-byte GIF could wedge the boot forever.** The play loop treated
+  `playFrame()`'s `-1` error return as "keep going" and had no upper bound. It now stops on any
+  `rc <= 0` (end **or** error) and hard-caps frames (`SPLASH_MAX_FRAMES`) and wall-clock
+  (`SPLASH_MAX_MS`), so no GIF can stall `setup()`. A truly corrupt file now falls back to the
+  static logo as intended.
+
+### Changed
+- **Run-screen button gestures swapped** (field-feedback request): a **quick press now flips the
+  page** (DIVE ↔ WATER) and a **hold-and-release now drops the POI marker**. Previously tap = POI,
+  hold = page flip. The frequent action (paging) is now the easy tap; the rare, don't-do-it-by-
+  accident action (dropping a marker) takes a deliberate hold. Only `runHandleNav()` changed — the
+  calibration-wizard gestures (tap = capture/cycle, hold = cancel/select) are unchanged.
+- The splash's final frame — and the static fallback logo — are now **held briefly**
+  (`SPLASH_HOLD_MS`, 1.2 s) before the sensor self-test screen. Previously `bootSplash()` was
+  followed immediately by `drawSensorScreen()`, so the hand-off image (and the fallback branding on
+  a no-SD unit) was wiped in the same frame and never actually seen.
+
+### Notes
+- No new features and no partition/UI changes — this is a correctness release for the v0.9.3 splash
+  player. The `/api/splash` OTA upload path and the "Splash / branding" SETTINGS card are unchanged;
+  they worked all along, but uploaded GIFs only ever showed frame 1 until this fix.
+- Splash authoring guidance unchanged: a **240×320** portrait GIF, short (~2–3 s). Encode with short
+  per-frame delays (~12 fps) and limited colors — the C6 plays at roughly 6–7 fps off SD, so a GIF
+  authored at 2 fps looks stepped and can bump the 8 s cap.
+
 ## [0.9.3] — 2026-06-30
 
 ### Added
@@ -89,6 +123,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   pre-commit image validation (`otaHeaderOk()`), on-device "DO NOT POWER OFF" progress screen,
   and the boot-gesture recovery AP for sealed-unit re-flash.
 
+[0.9.4]: https://github.com/
 [0.9.3]: https://github.com/
 [0.9.2]: https://github.com/
 [0.9.1]: https://github.com/

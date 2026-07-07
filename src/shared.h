@@ -74,8 +74,13 @@
 // 0.9.1 added in-browser dive-log charts in the portal Download view (client-side SVG small-multiples),
 // 0.9.2 turns an uncalibrated POET channel's blank tile into a "CALIBRATE" prompt (was a bare "--"),
 // 0.9.3 adds the boot-splash player (AnimatedGIF /splash.gif from SD, one pass -> GFX static fallback)
-//       and a SETTINGS "Splash / branding" card that uploads a new GIF over the AP (/api/splash, apply=reboot).
-#define FW_VERSION         "0.9.3"
+//       and a SETTINGS "Splash / branding" card that uploads a new GIF over the AP (/api/splash, apply=reboot),
+// 0.9.4 fixes boot-splash playback: the gifRead/gifSeek callbacks now maintain GIFFile.iPos (required by
+//       AnimatedGIF) so multi-frame GIFs play past frame 1 instead of dying on frame 2 with GIF_BAD_FILE;
+//       the play loop stops on rc<=0 and hard-caps frames+time so no GIF can wedge the boot; the final
+//       frame / fallback logo is now held (SPLASH_HOLD_MS) instead of being wiped instantly by the sensor screen.
+//       Also swaps the run-screen button gestures (field feedback): quick press flips the page, hold drops a POI.
+#define FW_VERSION         "0.9.4"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.

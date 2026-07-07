@@ -478,15 +478,17 @@ void renderRun() {
   }
 }
 
+// v0.9.4: short/long swapped per field feedback — a quick tap flips the page (the frequent action),
+// a deliberate hold drops a POI marker (the rare, don't-do-it-by-accident action).
 void runHandleNav(NavEvent e) {
-  if (e == NAV_SHORT) {                 // POI when logging, else just acknowledge the press
+  if (e == NAV_SHORT) {                 // page flip
+    g_page ^= 1; renderRun();
+  } else if (e == NAV_LONG) {           // POI when logging, else just acknowledge the press
     g_poiBannerUntil = millis() + POI_BANNER_MS;
     if (g_logging) { g_poiCount++; writeLogRow(true); g_bannerKind = 0;
       Serial.print("POI #"); Serial.println(g_poiCount); }
-    else { g_bannerKind = 1; Serial.println("short press (not logging)"); }
+    else { g_bannerKind = 1; Serial.println("long press (not logging)"); }
     renderRun();
-  } else if (e == NAV_LONG) {           // page flip
-    g_page ^= 1; renderRun();
   }
 }
 
@@ -567,7 +569,10 @@ static void thresholdsDefault() {
 // windowed write. No SD / missing file / open failure -> the GFX-drawn static fallback below,
 // which doubles as a diagnostic: drawn text instead of Kate's animation means the SD or the
 // splash file is missing. Boot is the one place blocking is allowed (CLAUDE.md rule 5).
-#define SPLASH_PATH "/splash.gif"
+#define SPLASH_PATH        "/splash.gif"
+#define SPLASH_MAX_FRAMES  600      // hard stop: no legitimate splash exceeds this many frames
+#define SPLASH_MAX_MS      8000UL   // hard stop: cap total splash time (a short branding clip)
+#define SPLASH_HOLD_MS     1200     // hold the final frame / fallback logo before the sensor screen
 
 static File s_gifFile;                       // backing handle for the AnimatedGIF file callbacks
 
@@ -581,13 +586,21 @@ static void gifClose(void *handle) {
   File *f = (File *)handle;
   if (f && *f) f->close();
 }
+// NOTE: AnimatedGIF requires the read/seek callbacks to maintain GIFFile.iPos themselves — the
+// library never advances it (see its built-in readFile/seekMem). If we don't, iPos stays 0 and
+// GIFParseInfo re-parses every frame as start-of-file: frame 1 draws, frame 2 fails GIF_BAD_FILE
+// (mid-file bytes have no "GIF89" magic) -> only the first frame ever shows. Keep iPos in sync.
 static int32_t gifRead(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
   File *f = (File *)pFile->fHandle;
-  return f ? (int32_t)f->read(pBuf, iLen) : 0;
+  if (!f) return 0;
+  int32_t n = (int32_t)f->read(pBuf, iLen);
+  if (n > 0) pFile->iPos += n;
+  return n;
 }
 static int32_t gifSeek(GIFFILE *pFile, int32_t iPosition) {
   File *f = (File *)pFile->fHandle;
   if (f) f->seek((uint32_t)iPosition);
+  pFile->iPos = iPosition;
   return iPosition;
 }
 
@@ -650,26 +663,39 @@ static void drawSplashFallback() {
   tft.setCursor((SCR_W - (int)strlen(l3) * 6) / 2, 262); tft.print(l3);
 }
 
-// Play the splash GIF one full pass (ignoring the GIF's loop flag), leaving the final frame on
-// screen as the handoff image. Returns false (caller draws the fallback) if there is nothing to play.
+// Play the splash GIF one full pass, leaving the final frame on screen as the handoff image.
+// Returns false (caller draws the fallback) if there was nothing to play or nothing decoded.
+//
+// Termination is safety-critical: this runs inside setup(), so a wedged loop here means the unit
+// never reaches the run screen. playFrame() returns 1 (more frames), 0 (last frame drawn), or -1
+// (decode/parse error); the decoder also auto-seeks back to frame 0 at EOF and only returns 0 when
+// the last frame ends within ~10 bytes of EOF. The old `while (playFrame(...))` treated -1 as
+// "keep going" and, on any GIF with trailing bytes after the final image, spun forever -> black
+// screen that never boots. So: stop on any rc <= 0 (end OR error), count only decoded frames, and
+// hard-cap frames + wall-clock so no malformed/looping GIF can ever stall the boot.
 static bool playSplashGif() {
   if (!g_sdReady || !SD.exists(SPLASH_PATH)) return false;
   AnimatedGIF *gif = new AnimatedGIF();          // ~kB-scale object on the heap (freed before the dive)
   if (!gif) return false;
-  bool played = false;
+  int frames = 0;
   gif->begin(GIF_PALETTE_RGB565_LE);
   if (gif->open(SPLASH_PATH, gifOpen, gifClose, gifRead, gifSeek, gifDraw)) {
-    int delayMs = 0;
-    while (gif->playFrame(true, &delayMs)) yield();   // bSync paces each frame; stop after one pass
+    int rc, delayMs = 0;
+    uint32_t t0 = millis();
+    do {
+      rc = gif->playFrame(true, &delayMs);       // bSync paces each frame to its delay
+      if (rc >= 0) frames++;                      // 0 = last frame drawn, 1 = more frames
+      yield();
+    } while (rc > 0 && frames < SPLASH_MAX_FRAMES && (uint32_t)(millis() - t0) < SPLASH_MAX_MS);
     gif->close();
-    played = true;
   }
   delete gif;
-  return played;
+  return frames > 0;                             // opened but decoded nothing (corrupt) -> fallback
 }
 
 static void bootSplash() {
   if (!playSplashGif()) drawSplashFallback();
+  delay(SPLASH_HOLD_MS);   // hold the final frame / fallback logo so it is seen before the sensor screen wipes it
 }
 
 // Boot-hold button gesture, shown on screen with a progress bar. Three outcomes from one button:

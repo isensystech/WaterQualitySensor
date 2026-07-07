@@ -179,9 +179,13 @@ the notes stay here because they document non-obvious design choices. RTC is the
   then hands off to the sensor self-test. Built on `bitbank2/AnimatedGIF`: the file is decoded
   **line-by-line** (SD file callbacks `gifOpen/Close/Read/Seek`, no full framebuffer) and each
   scanline is converted to RGB565 (`GIF_PALETTE_RGB565_LE`) and window-written to the ST7789 in
-  `gifDraw()` — transparency runs and disposal==2 are honored. The GIF's infinite-loop flag is
-  **ignored** (`while (playFrame(true,&d))` stops after the last frame, which is held as the
-  handoff image). The `AnimatedGIF` object is heap-allocated for the play then freed, so it costs
+  `gifDraw()` — transparency runs and disposal==2 are honored. Playback is **one pass, then the
+  final frame is held** as the handoff image. **`playFrame()` does NOT reliably return 0 at the
+  end** — the decoder auto-seeks back to frame 0 at EOF and returns -1 on any trailing bytes after
+  the last image, so `playSplashGif()` stops on `rc <= 0` (end OR error) and hard-caps frames +
+  wall-clock (`SPLASH_MAX_FRAMES`/`SPLASH_MAX_MS`). The naive `while (playFrame(...))` looped
+  forever on real-world GIFs (v0.9.3 field bug: black screen, never boots; fixed by the rc/cap
+  guard). The `AnimatedGIF` object is heap-allocated for the play then freed, so it costs
   no RAM during a dive. No SD / missing / unreadable file → `drawSplashFallback()`, a GFX-drawn
   ripple mark + "WATER QUALITY LOGGER" wordmark (**no baked bitmap** — drawn text instead of the
   animation is itself the missing-SD diagnostic). Blocking play is fine here (boot is the rule-5

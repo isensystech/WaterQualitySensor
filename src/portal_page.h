@@ -211,15 +211,15 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <p>There is one control: the push button. It does different things depending on how long you hold it.</p>
 <table>
 <tr><th>Action</th><th>What happens</th></tr>
-<tr><td><b>Quick press</b> (tap)</td><td>Drops a <b>marker</b> (POI &mdash; point of interest) into the log at this exact moment. A blue <span class=k>POI #</span> badge confirms it.</td></tr>
-<tr><td><b>Hold &amp; release</b></td><td>Flips between the two screens (<b>DIVE</b> and <b>WATER</b>).</td></tr>
+<tr><td><b>Quick press</b> (tap)</td><td>Flips between the two screens (<b>DIVE</b> and <b>WATER</b>).</td></tr>
+<tr><td><b>Hold &amp; release</b></td><td>Drops a <b>marker</b> (POI &mdash; point of interest) into the log at this exact moment. A blue <span class=k>POI #</span> badge confirms it.</td></tr>
 <tr><td><b>Hold during power-on</b></td><td>Enters <b>Calibration</b> mode (see the Calibration topic).</td></tr>
 </table>
-<p>If you tap to mark a point but the logger isn't recording yet, it shows <span class=k>NOT LOGGING</span> so you know nothing was saved.</p>
+<p>If you hold to mark a point but the logger isn't recording yet, it shows <span class=k>NOT LOGGING</span> so you know nothing was saved.</p>
 </div></details>
 
 <details><summary>&#128250; Reading the screen</summary><div class=db>
-<p>Hold-and-release flips between two screens:</p>
+<p>A quick press flips between two screens:</p>
 <ul>
 <li><b>DIVE screen</b> &mdash; big <b>depth</b>, plus how fast you're going up or down (<span class=k>UP</span>/<span class=k>DOWN</span>/<span class=k>HOLD</span> in m/min), temperature, pH and salinity.</li>
 <li><b>WATER screen</b> &mdash; the full set: temperature, pH, ORP, conductivity (EC), salinity and depth (or the fluorometer if fitted).</li>
@@ -368,7 +368,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <ul>
 <li>Logs <b>temperature, pH (ISFET), ORP, conductivity/salinity and depth</b>, plus an optional <b>Cyclops fluorometer</b>.</li>
 <li><b>Records every dive automatically</b> to a spreadsheet-ready CSV, with operator metadata and per-mission alarm bands.</li>
-<li>Lets you <b>mark points of interest</b> with a press and set <b>alarm limits</b> that colour the screen.</li>
+<li>Lets you <b>mark points of interest</b> with a button hold and set <b>alarm limits</b> that colour the screen.</li>
 </ul>
 </div></details>
 
