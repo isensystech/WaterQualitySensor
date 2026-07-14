@@ -1,4 +1,8 @@
-# Water Quality Logger — Monorepo
+<img width="1920" height="1080" alt="WCLSplash" src="https://github.com/user-attachments/assets/bf27cad4-d50f-4d34-aaf6-6866f2b1c614" />
+
+# Water Quality Logger 
+
+## Monorepo
 
 Three stacks, one repo. The shared contract between them is **the Supabase schema** —
 not code. Each stack builds and deploys independently.
