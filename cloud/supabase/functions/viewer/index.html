@@ -1,0 +1,190 @@
+<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>WQL Dive Viewer</title>
+<style>
+body{font-family:system-ui;margin:0;padding:18px;background:#0c1020;color:#e8eaf0;max-width:1100px;margin:0 auto}
+h2{color:#19c3c3;margin:.4em 0}
+.c{background:#161b30;border-radius:12px;padding:16px;margin:12px 0}
+.hint{font-size:13px;color:#9aa3c0;line-height:1.5}
+.warn{color:#efb02a;font-size:14px}.err{color:#ff5b50;font-size:14px}
+input,button,select{box-sizing:border-box;padding:11px;border-radius:8px;font-size:15px;margin-top:8px}
+input{width:100%;border:1px solid #2a3252;background:#0c1020;color:#fff}
+button{border:0;background:#185fa5;color:#fff;cursor:pointer}
+button.ghost{background:#1d2440;color:#9aa3c0}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.dive{display:block;width:100%;text-align:left;background:#161b30;border:1px solid #2a3252;border-radius:12px;padding:12px 14px;margin:8px 0;color:#e8eaf0}
+.dive:hover{border-color:#19c3c3}
+.dive b{color:#19c3c3}.dive small{color:#9aa3c0;display:block;margin-top:3px;line-height:1.5}
+.chdr{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.xbtn{background:#1d2440;color:#9aa3c0;padding:6px 12px}
+.cmeta{font-family:ui-monospace,monospace;font-size:11.5px;color:#9aa3c0;background:#0c1020;border:1px solid #2a3252;border-radius:8px;padding:8px 10px;margin:8px 0;line-height:1.55;overflow-x:auto}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:10px;margin-top:8px}
+.charts svg{width:100%;height:auto;background:#0c1020;border:1px solid #2a3252;border-radius:8px}
+.cnote{font-size:12.5px;color:#efb02a;margin:6px 0}
+.craw{display:inline-flex;gap:7px;align-items:center;font-size:13px;color:#9aa3c0;margin:6px 0}
+.craw input{width:auto;margin:0}
+.clegend{display:flex;gap:14px;font-size:12px;color:#9aa3c0;margin-top:6px}
+.clegend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.xax{display:flex;justify-content:space-between;font-size:11px;color:#9aa3c0;margin-top:4px}
+#login{max-width:420px;margin:8vh auto}
+a{color:#19c3c3}
+</style></head><body>
+
+<div id=login style="display:none">
+<h2>WQL Dive Viewer</h2>
+<div class=c>
+<p class=hint>Sign in to browse dives uploaded by the water-quality loggers.</p>
+<input id=email type=email placeholder=Email autocomplete=username>
+<input id=pass type=password placeholder=Password autocomplete=current-password>
+<button style="width:100%" onclick="signIn()">Sign in</button>
+<p id=lerr class=err></p>
+</div></div>
+
+<div id=app style="display:none">
+<div class=bar><h2>Dives</h2><div><span id=who class=hint></span> <button class=ghost onclick="signOut()">Sign out</button></div></div>
+<div id=list></div>
+<div id=chartpanel style="display:none" class=c></div>
+</div>
+
+<script>
+/* Injected by the edge function at serve time */
+var SB_URL='__SUPABASE_URL__', SB_KEY='__SUPABASE_ANON_KEY__';
+var SES=null, DIVES=[], DEVLBL={}, CH=null;
+function id(x){return document.getElementById(x);}
+
+/* ---------- session (GoTrue REST, no SDK) ---------- */
+function sesLoad(){try{SES=JSON.parse(localStorage.getItem('wql_session'))||null;}catch(e){SES=null;}}
+function sesSave(s){SES=s;if(s)localStorage.setItem('wql_session',JSON.stringify(s));else localStorage.removeItem('wql_session');}
+function tokenReq(body){return fetch(SB_URL+'/auth/v1/token?grant_type='+body.grant_type,{method:'POST',
+headers:{apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){
+if(!r.ok)throw new Error(j.error_description||j.msg||j.message||('auth failed ('+r.status+')'));
+sesSave({access_token:j.access_token,refresh_token:j.refresh_token,expires_at:Math.floor(Date.now()/1000)+(j.expires_in||3600),email:(j.user&&j.user.email)||''});});});}
+function sesFresh(){if(!SES)return Promise.reject(new Error('signed out'));
+if(SES.expires_at-60>Math.floor(Date.now()/1000))return Promise.resolve();
+return tokenReq({grant_type:'refresh_token',refresh_token:SES.refresh_token}).catch(function(e){sesSave(null);throw e;});}
+function signIn(){id('lerr').textContent='';
+tokenReq({grant_type:'password',email:id('email').value.trim(),password:id('pass').value})
+.then(function(){show();loadDives();}).catch(function(e){id('lerr').textContent=e.message;});}
+function signOut(){var t=SES&&SES.access_token;sesSave(null);
+if(t)fetch(SB_URL+'/auth/v1/logout',{method:'POST',headers:{apikey:SB_KEY,Authorization:'Bearer '+t}}).catch(function(){});
+show();}
+
+/* authed fetch: publishable key on apikey, user JWT on Authorization */
+function sb(path,opts){return sesFresh().then(function(){opts=opts||{};opts.headers=Object.assign(
+{apikey:SB_KEY,Authorization:'Bearer '+SES.access_token},opts.headers||{});
+return fetch(SB_URL+path,opts);}).then(function(r){
+if(r.status===401){sesSave(null);show();throw new Error('session expired — sign in again');}
+if(!r.ok)throw new Error(path.split('?')[0]+' failed ('+r.status+')');return r;});}
+
+/* ---------- dive list ---------- */
+function show(){id('login').style.display=SES?'none':'block';id('app').style.display=SES?'block':'none';
+id('who').textContent=SES?(SES.email||''):'';}
+function loadDives(){id('list').innerHTML='<p class=hint>Loading dives…</p>';
+Promise.all([
+sb('/rest/v1/dives?select=*&order=utc_start.desc.nullslast,uploaded_at.desc').then(function(r){return r.json();}),
+sb('/rest/v1/allowed_devices?select=mac,label').then(function(r){return r.json();})])
+.then(function(res){DIVES=res[0];DEVLBL={};res[1].forEach(function(d){DEVLBL[d.mac]=d.label||d.mac;});renderList();})
+.catch(function(e){id('list').innerHTML='<p class=err>'+esc(e.message)+'</p>';});}
+function fmtUtc(s){if(!s)return 'unsynced';var d=new Date(s);return isNaN(d)?esc(s):d.toISOString().replace('T',' ').replace(/:\d\d\..*/,'')+' UTC';}
+function renderList(){if(!DIVES.length){id('list').innerHTML='<p class=hint>No dives uploaded yet.</p>';return;}
+var h='';DIVES.forEach(function(d,i){
+h+='<button class=dive onclick="openDive('+i+')"><b>'+esc(d.filename)+'</b> — '+esc(DEVLBL[d.device_id]||d.device_id)+
+'<small>'+fmtUtc(d.utc_start)+' · cast '+esc(d.cast_num==null?'?':d.cast_num)+(d.site?' · '+esc(d.site):'')+
+(d.mission?' · '+esc(d.mission):'')+(d.water_type?' · '+esc(d.water_type):'')+
+(d.row_count!=null?' · '+esc(d.row_count)+' rows':'')+'</small></button>';});
+id('list').innerHTML=h;}
+
+/* ---------- chart rendering — ported from firmware/src/portal_page.h (keep in sync) ---------- */
+var CVW=336,CHH=120,CpadL=44,CpadR=8,CpadT=18,CpadB=14,CpW=CVW-CpadL-CpadR,CpH=CHH-CpadT-CpadB;
+var CSER=[
+{k:'depth',cols:[['depth_m',1]],lab:'Depth',u:'m',col:'#58a6ff',inv:1},
+{k:'temp',cols:[['cels_T_C',1],['bar30T_C',1],['poetT_mC',0.001]],lab:'Temp',u:'°C',col:'#ff8c5a'},
+{k:'ph',cols:[['pH',1]],lab:'pH',u:'',col:'#c98bff'},
+{k:'ec',cols:[['EC_mScm',1]],lab:'Conductivity',u:'mS/cm',col:'#5dd6c0'},
+{k:'sal',cols:[['sal_PSU',1]],lab:'Salinity',u:'PSU',col:'#7fd6ff'},
+{k:'orp',cols:[['ORP_Eh_mV',1]],lab:'ORP',u:'mV',col:'#e0c060'},
+{k:'cyc',cols:[['cyc_conc',1]],lab:'Fluorometry',u:'',col:'#6ee07a',opt:1}];
+var CRAW=[
+{col:'P_mbar',lab:'Pressure',u:'mbar'},{col:'ugs_uV',lab:'pH raw (Ugs)',u:'µV'},
+{col:'orp_uV',lab:'ORP raw',u:'µV'},{col:'ec_nA',lab:'EC current',u:'nA'},
+{col:'ec_uV',lab:'EC voltage',u:'µV'},{col:'cyc_V',lab:'Cyclops raw',u:'V'}];
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function Nn(x){return (x==null||x==='')?NaN:+x;}
+function fmtNum(v){var a=Math.abs(v);if(a>=1000)return v.toFixed(0);if(a>=100)return v.toFixed(1);if(a>=1)return v.toFixed(2);return v.toFixed(3);}
+function fmtT(ms){var s=Math.round(ms/1000),m=Math.floor(s/60);s-=m*60;return m+':'+(s<10?'0':'')+s;}
+function parseCsv(t){var L=t.split(/\r?\n/),meta=[],cols=null,rows=[],i,j;
+for(i=0;i<L.length;i++){var ln=L[i];if(ln==='')continue;
+if(ln.charAt(0)==='#'){meta.push(ln.replace(/^#\s?/,''));continue;}
+if(!cols){cols=ln.split(',');continue;}
+var c=ln.split(','),r=new Array(cols.length);for(j=0;j<cols.length;j++)r[j]=Nn(c[j]);rows.push(r);}
+var idx={};if(cols)for(i=0;i<cols.length;i++)idx[cols[i]]=i;
+return {meta:meta,cols:cols||[],rows:rows,idx:idx};}
+function seriesPts(P,X,cols){for(var d=0;d<cols.length;d++){var i=P.idx[cols[d][0]];if(i==null)continue;
+var sc=cols[d][1],pts=[],any=false;
+for(var r=0;r<P.rows.length;r++){var v=P.rows[r][i];if(!isNaN(v)){any=true;v*=sc;}pts.push([X[r],v]);}
+if(any)return pts;}return null;}
+function decimate(pts,W){if(pts.length<=W*2)return {pts:pts,dec:false};
+var bs=Math.ceil(pts.length/W),out=[];
+for(var i=0;i<pts.length;i+=bs){var hi=Math.min(i+bs,pts.length),mn=Infinity,mx=-Infinity,mnx=0,mxx=0,any=false;
+for(var j=i;j<hi;j++){var y=pts[j][1];if(isNaN(y))continue;any=true;if(y<mn){mn=y;mnx=pts[j][0];}if(y>mx){mx=y;mxx=pts[j][0];}}
+if(!any){out.push([pts[i][0],NaN]);continue;}
+if(mnx<=mxx){out.push([mnx,mn]);if(mxx!==mnx)out.push([mxx,mx]);}else{out.push([mxx,mx]);out.push([mnx,mn]);}}
+return {pts:out,dec:true};}
+function linePath(pts,X,Y){var d='',pen=false;
+for(var i=0;i<pts.length;i++){var y=pts[i][1];if(isNaN(y)){pen=false;continue;}
+d+=(pen?'L':'M')+X(pts[i][0]).toFixed(1)+' '+Y(y).toFixed(1)+' ';pen=true;}return d;}
+function miniChart(o,xMin,xMax,pois){var yMin=Infinity,yMax=-Infinity,i;
+for(i=0;i<o.pts.length;i++){var y=o.pts[i][1];if(!isNaN(y)){if(y<yMin)yMin=y;if(y>yMax)yMax=y;}}
+if(yMin===Infinity){yMin=0;yMax=1;}if(yMin===yMax){yMin-=1;yMax+=1;}
+var pd=(yMax-yMin)*0.08;yMin-=pd;yMax+=pd;var rng=(yMax-yMin)||1,xr=(xMax-xMin)||1;
+function Y(v){return o.inv?(CpadT+(v-yMin)/rng*CpH):(CpadT+(yMax-v)/rng*CpH);}
+function X(x){return CpadL+(x-xMin)/xr*CpW;}
+var s='<svg viewBox="0 0 '+CVW+' '+CHH+'">';
+s+='<rect x="'+CpadL+'" y="'+CpadT+'" width="'+CpW+'" height="'+CpH+'" fill="none" stroke="#2a3252" />';
+for(i=0;i<pois.length;i++){var px=X(pois[i]).toFixed(1);
+s+='<line x1="'+px+'" y1="'+CpadT+'" x2="'+px+'" y2="'+(CpadT+CpH)+'" stroke="#c98bff" stroke-dasharray="3 3" opacity="0.7" />';}
+s+='<path d="'+linePath(o.pts,X,Y)+'" fill="none" stroke="'+o.col+'" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />';
+s+='<text x="4" y="13" fill="'+o.col+'" font-size="11" font-weight="700">'+esc(o.lab)+(o.u?(' ('+esc(o.u)+')'):'')+'</text>';
+s+='<text x="'+(CpadL-3)+'" y="'+(CpadT+4)+'" fill="#9aa3c0" font-size="9" text-anchor="end">'+fmtNum(o.inv?yMin:yMax)+'</text>';
+s+='<text x="'+(CpadL-3)+'" y="'+(CpadT+CpH)+'" fill="#9aa3c0" font-size="9" text-anchor="end">'+fmtNum(o.inv?yMax:yMin)+'</text>';
+return s+'</svg>';}
+
+/* ---------- dive view ---------- */
+function openDive(i){var d=DIVES[i],P=id('chartpanel');P.style.display='block';
+P.innerHTML='<p class=hint>Loading '+esc(d.filename)+'…</p>';P.scrollIntoView({behavior:'smooth',block:'start'});
+sb('/storage/v1/object/authenticated/dives/'+d.storage_path.split('/').map(encodeURIComponent).join('/'))
+.then(function(r){return r.text();})
+.then(function(t){CH={dive:d,P:parseCsv(t),csv:t,raw:false};drawCharts();})
+.catch(function(e){P.innerHTML='<p class=err>Could not load '+esc(d.filename)+': '+esc(e.message)+'</p>';});}
+function dlCsv(){if(!CH)return;var a=document.createElement('a');
+a.href=URL.createObjectURL(new Blob([CH.csv],{type:'text/csv'}));a.download=CH.dive.filename;a.click();
+setTimeout(function(){URL.revokeObjectURL(a.href);},5000);}
+function drawCharts(){var P=id('chartpanel');if(!CH)return;
+var D=CH.P,d=CH.dive,r,c;
+var head='<div class=chdr><b>'+esc(d.filename)+' — '+esc(DEVLBL[d.device_id]||d.device_id)+'</b><span>'+
+'<button class=xbtn onclick="dlCsv()">download CSV</button> '+
+'<button class=xbtn onclick="id(&#39;chartpanel&#39;).style.display=&#39;none&#39;">close</button></span></div>';
+var meta='';for(var m=0;m<D.meta.length;m++)meta+='<div>'+esc(D.meta[m])+'</div>';if(meta)meta='<div class=cmeta>'+meta+'</div>';
+if(!D.rows.length){P.innerHTML=head+meta+'<p class=hint>No data rows in this dive.</p>';return;}
+var mi=D.idx.ms,pi=D.idx.poi,X=new Array(D.rows.length),pois=[];
+for(r=0;r<D.rows.length;r++){var xv=(mi!=null)?D.rows[r][mi]:NaN;X[r]=isNaN(xv)?r:xv;if(pi!=null&&D.rows[r][pi]===1)pois.push(X[r]);}
+var xMin=X[0],xMax=X[X.length-1];if(!(xMax>xMin))xMax=xMin+1;
+var svg='',skipped=[],dec=false;
+for(c=0;c<CSER.length;c++){var cf=CSER[c],pts=seriesPts(D,X,cf.cols);
+if(!pts){if(!cf.opt)skipped.push(cf.lab);continue;}
+var dd=decimate(pts,CpW);if(dd.dec)dec=true;
+svg+=miniChart({pts:dd.pts,lab:cf.lab,u:(cf.k==='cyc'?(d.cyclops_units||cf.u):cf.u),col:cf.col,inv:cf.inv},xMin,xMax,pois);}
+if(CH.raw)for(c=0;c<CRAW.length;c++){var rf=CRAW[c],rpts=seriesPts(D,X,[[rf.col,1]]);if(!rpts)continue;
+var rd=decimate(rpts,CpW);if(rd.dec)dec=true;
+svg+=miniChart({pts:rd.pts,lab:rf.lab,u:rf.u,col:'#9aa3c0'},xMin,xMax,pois);}
+var notes='';if(skipped.length)notes+='<div class=cnote>No data (sensor off or uncalibrated): '+esc(skipped.join(', '))+'.</div>';
+if(dec)notes+='<div class=cnote>Long dive — min/max decimated to fit; excursions preserved.</div>';
+var rawtog='<label class=craw><input type=checkbox '+(CH.raw?'checked':'')+' onchange="CH.raw=this.checked;drawCharts()">Show raw diagnostic channels</label>';
+var xax=svg?('<div class=xax><span>0:00</span><span>'+fmtT((xMax-xMin)/2)+'</span><span>'+fmtT(xMax-xMin)+'</span></div>'):'';
+var leg=(svg&&pois.length)?('<div class=clegend><span><i style="background:#c98bff"></i>POI ('+pois.length+')</span></div>'):'';
+var body=svg?('<div class=charts>'+svg+'</div>'+xax+leg):'<p class=hint>No plottable metrics in this file (sensors off or uncalibrated).</p>';
+P.innerHTML=head+meta+rawtog+notes+body;}
+
+/* ---------- boot ---------- */
+sesLoad();show();
+if(SES)sesFresh().then(loadDives).catch(function(){show();});
+</script></body></html>

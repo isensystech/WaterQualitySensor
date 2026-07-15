@@ -252,32 +252,52 @@ create policy dive_read_auth  on storage.objects
 
 ### Device request format (2 HTTPS calls per dive, surface-only, streamed)
 
-**1 — raw CSV to Storage:**
+> **Contract revised + verified against the live project (2026-07-14).** The original
+> upsert plan (`x-upsert: true` / `Prefer: resolution=merge-duplicates`) does NOT work:
+> every PostgREST/storage ON CONFLICT path trips extra RLS visibility checks that anon
+> deliberately fails (42501 "new row violates row-level security policy"), even with an
+> anon UPDATE policy in place, even when no conflict exists. Plain POST works, and a
+> duplicate returns a clean 409. Dive files are immutable after close, so
+> insert-once + treat-409-as-synced is fully idempotent — and anon keeps zero
+> update/overwrite surface (see migration 0002).
+
+**1 — raw CSV to Storage (plain POST, no x-upsert):**
 
 ```
 POST https://<ref>.supabase.co/storage/v1/object/dives/<mac>/dive0007.csv
 apikey: sb_publishable_xxx
 Content-Type: text/csv
-x-upsert: true
 <body: raw CSV bytes, STREAMED from SD — do not buffer whole file in RAM>
+
+200 -> uploaded | body {"statusCode":"409","error":"Duplicate"} -> already synced, mark done
 ```
 
-**2 — metadata row via PostgREST (upsert):**
+**2 — metadata row via PostgREST (plain insert):**
 
 ```
 POST https://<ref>.supabase.co/rest/v1/dives
 apikey: sb_publishable_xxx
 Content-Type: application/json
-Prefer: resolution=merge-duplicates      -- upsert on unique(device_id, filename)
+Prefer: return=minimal
 
 { "device_id":"<mac>", "filename":"dive0007.csv",
   "storage_path":"<mac>/dive0007.csv",
   "cast_num":7, "mission":"...", "operator":"...", "site":"...",
   "water_type":"...", "lat":27.861, "lon":-80.446,
+  "weather":"Sunny", "air_temp_c":31.0, "notes":"...",
   "utc_start":"2026-06-28T10:02:00Z", "time_source":"PHONE",
   "cal_ph":true, "cal_ec":true, "cal_orp":true, "cal_cyc":true,
+  "poet_en":true, "bar30_en":true, "cels_en":true, "cyc_en":false,
   "cyclops_units":"ppb", "row_count":300 }
+
+201 -> created | 409 (code 23505 unique violation) -> already synced, mark done
+409 (code 23503 FK violation) -> MAC not on allowlist — do NOT retry forever
 ```
+
+All fields mirror the CSV meta header (`writeMetaHeader()`), including `weather`/
+`air_temp_c`/`notes` and the v0.9.0 `# sensors:` enable flags. When the clock never
+synced, the header says `utc_start: unsynced` — send `"utc_start": null` (and
+`time_source":"UNSYNCED"`), not the literal string.
 
 The device already holds every one of these fields in the `deploy` struct + the CSV
 meta header (`writeMetaHeader()` in `main.cpp`), so building the JSON is cheap — no
@@ -354,10 +374,15 @@ Per-device secret → Edge Function upload proxy verifying `mac + secret` agains
 
 **Cloud (Supabase) base functionality:**
 
-- [ ] `allowed_devices` + `dives` tables and RLS applied via CLI migration; known MACs seeded
-- [ ] Storage bucket `dives` (private) with anon-insert / authed-read policies
-- [ ] Device uploads raw CSV to `dives/<mac>/<file>` using publishable key on `apikey` header
-- [ ] Device posts metadata row via PostgREST; upsert idempotent on `(device_id, filename)`
-- [ ] Unknown MAC is rejected by the FK (allowlist gate proven)
-- [ ] Viewer app: Supabase Auth login, lists dives, renders charts via reused portal renderer
+- [x] `allowed_devices` + `dives` tables and RLS applied via CLI migration (0001+0002);
+      placeholder MACs seeded — replace with real traced MACs
+- [x] Storage bucket `dives` (private) with anon-insert / authed-read policies
+- [x] Device uploads raw CSV to `dives/<mac>/<file>` using publishable key on `apikey`
+      header (verified with synthetic dive, 2026-07-14)
+- [x] Device posts metadata row via PostgREST; duplicate-safe on `(device_id, filename)`
+      (plain insert, 409 = already synced — see revised request format above)
+- [x] Unknown MAC is rejected by the FK (allowlist gate proven live: 23503)
+- [x] Viewer app deployed (Edge Function `viewer`); Supabase Auth login, lists dives,
+      renders charts via reused portal renderer — authed leg needs a first Auth user to
+      log in and confirm
 - [ ] Uploaded dives flagged synced in the on-SD manifest and KEPT (no deletion)

@@ -5,9 +5,13 @@ The SHARED CONTRACT for all three stacks — schema changes ripple everywhere.
 
 ## Layout
 supabase/migrations/  SQL migrations — SOURCE OF TRUTH for the schema
-supabase/seed.sql     MAC allowlist seed (known units)
-viewer/               static viewer app (Supabase Auth login, lists dives, renders charts)
-functions/            edge functions (none at MVP; per-device-secret proxy = hardening path)
+supabase/seed.sql     MAC allowlist seed (placeholder MACs — replace with traced units)
+supabase/functions/viewer/  the viewer app (index.html) + edge function that serves it
+viewer/               README pointer only — the app lives in supabase/functions/viewer/
+
+Deployed (project ref gwaxsksjierpzbxugbxj, 2026-07-14): migrations 0001+0002 pushed,
+seed applied, viewer live at https://gwaxsksjierpzbxugbxj.supabase.co/functions/v1/viewer
+Deploy commands: supabase db push | supabase functions deploy viewer --use-api
 
 ## Working with Supabase
 - Schema = CLI migrations: supabase migration new, edit SQL, supabase db push.
@@ -25,17 +29,34 @@ Secret key (sb_secret_...) = base station + edge functions only. Never on a devi
 ## Schema summary
 - allowed_devices(mac PK, label, secret_hash, added_at) — known units, pre-seeded.
 - dives(... device_id FK->allowed_devices, unique(device_id,filename) ...) — logger dives.
-- stations(station_id PK, label, lat, lon) — base stations.
+  Mirrors the FULL CSV meta header incl. weather, air_temp_c, notes, and the v0.9.0
+  sensor-enable flags (poet_en/bar30_en/cels_en/cyc_en — viewer needs them to tell a
+  sensor that was off from one that logged nothing).
+- stations(station_id PK, label, lat, lon) — base stations. (not built yet)
 - readings(station_id FK, sensor, metric, value, unit, ts, lat, lon, source) — generic env
-  suite; wide shape absorbs new sensors without migrations.
+  suite; wide shape absorbs new sensors without migrations. (not built yet)
 FK on dives.device_id IS the allowlist gate (FK validation bypasses RLS -> no MAC-list leak).
 
+Gotchas proven against the live project (don't re-learn these):
+- New (2026) projects do NOT auto-grant anon/authenticated on new public tables —
+  every migration adding a table MUST add explicit grants or PostgREST 401s.
+- Anon upserts are impossible here: ANY ON CONFLICT path (PostgREST merge-/ignore-
+  duplicates, storage x-upsert) fails RLS for a role with no SELECT policy. Device
+  contract is therefore PLAIN insert/POST; duplicate -> 409 = "already synced"
+  (dive files are immutable, so that's still idempotent). Migration 0002 removed the
+  anon UPDATE surface entirely. Full request format: docs/DiveSync-To-Do.md Phase 4.
+
 ## Build order (this stack)
-1. 0001_divesync_init.sql — allowed_devices, dives, storage bucket, RLS.  <- first
-2. Seed known MACs.
-3. (firmware upload leg — other stack — tests this end to end)
+1. DONE 0001_divesync_init.sql + 0002_no_anon_update.sql — tables, bucket, RLS, grants.
+2. DONE seed — placeholder MACs (f412fa000001-03); replace with real traced MACs.
+   (deleting a placeholder MAC requires deleting its dives rows first — FK.)
+3. (firmware upload leg — other stack — device contract already smoke-tested with a
+   synthetic dive: f412fa000001/dive0000.csv, mission "Cloud smoke test"; delete when
+   real data flows)
 4. 000x_stations_readings.sql — base station tables (when base station work starts).
-5. Viewer app — reuses firmware portal chart renderer (parseCsv/miniChart/drawCharts).
+5. DONE viewer app — supabase/functions/viewer/, reuses the portal chart renderer
+   (parseCsv/miniChart/drawCharts ported from firmware/src/portal_page.h — keep in sync).
+   Auth users are created by hand: Dashboard -> Authentication -> Add user.
 
 ## Don't
 - Don't put secrets in git.
