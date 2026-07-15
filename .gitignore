@@ -10,3 +10,6 @@ node_modules/
 __pycache__/
 *.pyc
 .venv/
+
+# Supabase CLI junk when run from repo root (real config lives in cloud/supabase)
+/supabase/
