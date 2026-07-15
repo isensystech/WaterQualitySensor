@@ -51,6 +51,11 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
 - **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, boot-splash player (AnimatedGIF
   `/splash.gif` from SD, one pass + GFX static fallback), backlight PWM + auto-dim,
   sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
+- **`divesync.cpp`** (v0.10.0) — DiveSync cloud offload: surface-only state machine that joins a
+  configured internet Wi-Fi after a dive and uploads unsynced `dive*.csv` to Supabase (storage
+  POST + PostgREST metadata row parsed from the file's own `#` header; manifest `/sync.csv`).
+  Hard-gated on `!g_logging && !g_submerged && !portalActive()`; button press cancels. The cloud
+  contract lives in docs/DiveSync-To-Do.md Phase 4 (REVISED: plain POST, 409 = already synced).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
   `FW_VERSION` is defined **canonically here** (currently `0.9.3` — `0.8.0` added OTA, `0.8.1`
   added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect

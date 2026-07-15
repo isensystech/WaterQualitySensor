@@ -232,6 +232,9 @@ static void openDiveLog() {
 static void closeDiveLog() {
   if (g_logFile) { g_logFile.flush(); g_logFile.close(); }
   g_logging = false; Serial.println("Log closed (surfaced)");
+  stateSave();      // persist castNum now (a power cycle before the next portal save would rewind it,
+                    // and DiveSync's c<cast>_ upload names rely on cast never repeating)
+  diveSyncKick();   // new file on the card: sync tries promptly once the surface gate opens
 }
 
 static void writeLogRow(bool poi) {
@@ -279,7 +282,8 @@ static void updateLoggingGate() {
 static void footer() {
   tft.setTextSize(1); tft.setCursor(4, SCR_H - 12);
   tft.setTextColor(g_sdReady ? ST77XX_GREEN : ST77XX_RED); tft.print(g_sdReady ? "SD " : "SD!");
-  tft.setTextColor(g_logging ? ST77XX_GREEN : ST77XX_YELLOW); tft.print(g_logging ? " LOG " : " IDLE ");
+  if (diveSyncBusy()) { tft.setTextColor(ST77XX_CYAN); tft.print(" SYNC "); }
+  else { tft.setTextColor(g_logging ? ST77XX_GREEN : ST77XX_YELLOW); tft.print(g_logging ? " LOG " : " IDLE "); }
   tft.setTextColor(g_timeSynced ? (g_timeApprox ? ST77XX_YELLOW : ST77XX_GREEN) : ST77XX_RED);
   tft.print(g_timeSynced ? (g_timeApprox ? "t~ " : "t " ) : "t! ");
   tft.setTextColor(ST77XX_WHITE);
@@ -763,6 +767,7 @@ void setup() {
   SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI);
   Wire.begin(PIN_SDA, PIN_SCL);
   thresholdsDefault();
+  diveSyncDefaults();   // cloud URL/key defaults; state.json (loaded below) overrides
 
   // I2C presence scan BEFORE state.json loads, so a never-configured sensor defaults to
   // "detected = enabled". stateLoad() then layers any saved user override on top, and the
@@ -876,6 +881,7 @@ void loop() {
 
   NavEvent e = g_nav; g_nav = NAV_NONE;
   if (e != NAV_NONE) {
+    if (diveSyncBusy()) diveSyncCancel("button");   // any press aborts a sync in flight (doc rule)
     if (backlightWake()) {
       // Screen was dimmed/off: this press only wakes it -- swallow it (no POI, no page flip).
     } else if (g_mode == MODE_CAL) {
@@ -893,6 +899,7 @@ void loop() {
   if (g_uiDirty && g_mode == MODE_RUN) { g_uiDirty = false; renderRun(); }  // e.g. accent changed
 
   backlightLoop();                      // advance the idle->fade->off timer
+  diveSyncLoop();                       // surface-only cloud offload; hard-gated internally
 
   switch (g_state) {
     case S_IDLE:

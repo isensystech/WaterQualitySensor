@@ -152,6 +152,24 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <label>Calibration standard concentration</label><input id=cyc_s type=number step=any inputmode=decimal placeholder="e.g. 100">
 <p class=hint>Set the standard's value, then run the device CAL menu &rarr; "Cyclops (2-pt)" (blank, then standard).</p></div>
 
+<div class=c><h3>Data offload</h3>
+<label>After each dive, upload logs to&hellip;</label>
+<select id=ds_mode onchange=dsModeUI()>
+<option value=0>Nowhere (manual download only)</option>
+<option value=1>Cloud &mdash; via internet Wi-Fi</option>
+<option value=2 disabled>Local base station (coming soon)</option>
+</select>
+<div id=ds_cloud style="display:none">
+<label>Internet Wi-Fi network (hotspot / home Wi-Fi)</label><input id=ds_ssid placeholder="network name (SSID)">
+<label>Wi-Fi password</label><input id=ds_pass type=password autocomplete=off>
+<label>Cloud URL (blank = default)</label><input id=ds_url placeholder="https://xxxx.supabase.co">
+<label>API key (blank = default)</label><input id=ds_key placeholder="sb_publishable_...">
+</div>
+<p class=hint>When you surface after a dive, the logger looks for this network and uploads any
+new dives on its own &mdash; dock it near the hotspot and walk away. It never touches Wi-Fi while
+diving, a button press cancels a sync in progress, and the footer shows <b>SYNC</b> while it runs.
+Uploaded files stay on the card.</p></div>
+
 <div class=c><h3>Device</h3>
 <div id=ts class=warn>checking...</div>
 <button class=b2 onclick=sync()>Re-sync time from this phone</button>
@@ -309,6 +327,21 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <p class=hint>Only upload firmware meant for <b>this</b> logger. It rejects files that aren't for its chip, but it can't tell two builds made for it apart &mdash; so use the file the team gave you.</p>
 </div></details>
 
+<details><summary>&#9729;&#65039; Automatic cloud upload</summary><div class=db>
+<p>The logger can <b>upload dives to the cloud by itself</b> after you surface &mdash; no phone needed at the water.</p>
+<ol>
+<li>Under <b>SETTINGS &rarr; Data offload</b> choose <b>Cloud</b> and enter the Wi-Fi network it should use (a phone hotspot or the boat/base Wi-Fi &mdash; a network with <b>internet</b>, not the logger's own Wi-Fi). Leave URL and API key blank to use the team's cloud.</li>
+<li>Dive as normal. Wi-Fi stays off the whole time you're in the water.</li>
+<li>After you surface, the logger looks for that network every so often (its own setup Wi-Fi switched off when the dive began, freeing the radio). When it sees the network, the footer shows <span class=k>SYNC</span> and new dives upload one by one.</li>
+</ol>
+<ul>
+<li><b>A button press cancels</b> an upload in progress &mdash; diving in again does too, instantly. It retries later on its own.</li>
+<li>Uploaded dives are remembered (so nothing uploads twice) and <b>always stay on the SD card</b>.</li>
+<li>View the data at the team's dive viewer web page &mdash; ask for a login.</li>
+<li>If a unit's uploads are rejected, its serial/ID may not be on the cloud allowlist yet &mdash; tell the team.</li>
+</ul>
+</div></details>
+
 <details><summary>&#128190; Your data &amp; log files</summary><div class=db>
 <p>Everything saves to the microSD card as plain <b>CSV</b> you can open in Excel, Google Sheets, or any spreadsheet.</p>
 <ul>
@@ -454,6 +487,12 @@ if(s.cyc_u!=null)id('cyc_u').value=s.cyc_u;
 if(s.cyc_s!=null)id('cyc_s').value=s.cyc_s;
 if(s.det)paintDetect(s.det);
 if(s.dim!=null)setDim(s.dim);
+if(s.ds_mode!=null)id('ds_mode').value=s.ds_mode;
+if(s.ds_ssid!=null)id('ds_ssid').value=s.ds_ssid;
+if(s.ds_pass!=null)id('ds_pass').value=s.ds_pass;
+if(s.ds_url!=null)id('ds_url').value=s.ds_url;
+if(s.ds_key!=null)id('ds_key').value=s.ds_key;
+dsModeUI();
 if(s.thresh)TM.forEach(function(m){var o=s.thresh[m]||{};TB.forEach(function(b){if(o[b]!=null)id(m+'_'+b).value=o[b];});});
 var t=id('ts'),good=(s.synced&&!s.approx);
 if(good){t.className='ok';t.textContent='time OK';id('synccard').style.display='none';}
@@ -466,9 +505,12 @@ c.classList.remove('found','absent');c.classList.add(ok?'found':'absent');
 d.textContent=ok?'detected':'not found';d.className='det '+(ok?'okd':'badd');}
 function paintDetect(d){if(!d)return;setSens('poet',d.poet);setSens('bar30',d.bar30);setSens('cels',d.cels);setSens('cyc',d.cyc);}
 function scanSensors(){fetch('/api/scan').then(r=>r.json()).then(paintDetect).catch(e=>{});}
+function dsModeUI(){id('ds_cloud').style.display=(+V('ds_mode')===1)?'block':'none';}
 function payload(){return {mission:V('mission'),op:V('op'),site:V('site'),wt:V('wt'),accent:parseInt(V('accent')),gps:parseGps(V('gps')),wx:V('wx'),notes:V('notes'),
 poet_en:id('poet_en').checked,bar30_en:id('bar30_en').checked,cels_en:id('cels_en').checked,
-cyc_en:id('cyc_en').checked,cyc_u:V('cyc_u'),cyc_s:parseFloat(V('cyc_s')),dim:clampDim(V('dim')),thresh:buildThresh()};}
+cyc_en:id('cyc_en').checked,cyc_u:V('cyc_u'),cyc_s:parseFloat(V('cyc_s')),dim:clampDim(V('dim')),
+ds_mode:parseInt(V('ds_mode')),ds_ssid:V('ds_ssid').trim(),ds_pass:V('ds_pass'),ds_url:V('ds_url').trim(),ds_key:V('ds_key').trim(),
+thresh:buildThresh()};}
 function commit(m){fetch('/api/deploy',{method:'POST',body:JSON.stringify(payload())}).then(r=>r.text()).then(t=>{ok(m);go('home');}).catch(e=>{ok(m);go('home');});}
 function start(){commit('Mission saved. You can disconnect and dive.');}
 function saveSettings(){commit('Settings saved.');}

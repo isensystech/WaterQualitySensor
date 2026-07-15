@@ -4,6 +4,35 @@ All notable changes to the Dive WaterQuality Logger firmware are documented here
 Versions track `FW_VERSION` in [`src/shared.h`](src/shared.h) — the single source of truth.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.0] — 2026-07-15
+
+### Added
+- **DiveSync cloud offload** (`src/divesync.cpp`, docs/DiveSync-To-Do.md Phases 1/2/4): after a
+  dive, on the surface, the logger joins a configured internet Wi-Fi and uploads unsynced
+  `dive*.csv` files to Supabase on its own — raw CSV streamed to Storage, then a metadata row
+  (parsed from the file's own `#` header) to PostgREST. Per the **revised, live-verified** cloud
+  contract: plain POSTs, `409`/duplicate = already synced, FK `23503` = MAC not allowlisted
+  (marked REJECTED, never retried forever). Publishable key on the `apikey` header only.
+- **SETTINGS → "Data offload" card**: None (default — zero behavior change) / Cloud. Wi-Fi
+  SSID + password, cloud URL + API key (blank = baked-in team defaults). Persists in
+  `state.json` (`ds_*`), rides the unified POST-the-full-DOM save model.
+- **On-SD sync manifest** (`/sync.csv`, append-only `filename,epoch,status`): survives reboots,
+  prevents re-uploads. "Clear logs" wipes it too (dive numbering restarts after a clear).
+  Upload objects are named `c<cast>_<file>` so a cleared card can never collide with an older
+  upload of the same filename — the cast counter only climbs (now persisted at every log close).
+- Footer shows **SYNC** while a pass runs; HELP gained an "Automatic cloud upload" topic.
+
+### Safety / constraints
+- **The dive loop is untouched.** The state machine advances only when `!g_logging &&
+  !g_submerged`, portal AP down, run mode; any dive/portal activity — or a button press —
+  aborts a sync instantly (Wi-Fi off well inside the 3-sample logging debounce).
+- Non-blocking throughout (one SD→TLS chunk per `loop()` pass; sampling cadence unaffected),
+  except two bounded, surface-only exceptions in the OTA spirit: the Wi-Fi join and the TLS
+  handshake (deadline-capped). STA TX power lowered to the same brownout guard as the AP.
+- TLS is `setInsecure()` at MVP (documented); hardening = pin the Supabase root CA.
+- **Phase 3 (deep sleep) is deliberately NOT in this release** — sync gets field-validated
+  first; a unit that never sleeps just behaves like v0.9.x.
+
 ## [0.9.4] — 2026-07-07
 
 ### Fixed

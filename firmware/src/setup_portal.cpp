@@ -65,6 +65,11 @@ void stateSave() {
   d["cyc_u"]   = deploy.cyc_units;
   d["cyc_s"]   = deploy.cyc_std;
   d["dim"]     = deploy.dimMinutes;
+  d["ds_mode"] = dsync.mode;         // DiveSync (cloud offload) config
+  d["ds_ssid"] = dsync.ssid;
+  d["ds_pass"] = dsync.pass;
+  d["ds_url"]  = dsync.url;
+  d["ds_key"]  = dsync.key;
   // operator metadata persists so the NEXT mission can prefill from the last one
   d["mission"] = deploy.mission;
   d["op"]      = deploy.op;
@@ -93,6 +98,12 @@ void stateLoad() {
   if (d["cyc_u"].is<const char *>()) cpy(deploy.cyc_units, sizeof(deploy.cyc_units), d["cyc_u"]);
   deploy.cyc_std = d["cyc_s"] | deploy.cyc_std;
   deploy.dimMinutes = d["dim"] | deploy.dimMinutes;   // absent -> keep default (clamped on use)
+  // DiveSync: saved value wins; absent key keeps diveSyncDefaults() (mode NONE, baked cloud URL/key)
+  dsync.mode = d["ds_mode"] | dsync.mode;
+  if (d["ds_ssid"].is<const char *>()) cpy(dsync.ssid, sizeof(dsync.ssid), d["ds_ssid"]);
+  if (d["ds_pass"].is<const char *>()) cpy(dsync.pass, sizeof(dsync.pass), d["ds_pass"]);
+  if (d["ds_url"].is<const char *>()  && strlen(d["ds_url"]))  cpy(dsync.url, sizeof(dsync.url), d["ds_url"]);
+  if (d["ds_key"].is<const char *>()  && strlen(d["ds_key"]))  cpy(dsync.key, sizeof(dsync.key), d["ds_key"]);
   // last-mission metadata (guarded so an absent key never self-copies)
   if (d["mission"].is<const char *>()) cpy(deploy.mission,   sizeof(deploy.mission),   d["mission"]);
   if (d["op"].is<const char *>())      cpy(deploy.op,        sizeof(deploy.op),        d["op"]);
@@ -148,6 +159,14 @@ static void handleState() {
   root["cyc_u"]   = deploy.cyc_units;
   root["cyc_s"]   = deploy.cyc_std;
   root["dim"]     = dimMinutesEffective();   // clamped value so the slider shows the real default
+  // DiveSync config round-trips in full (incl. the AP password): the unified POST-the-full-DOM
+  // save model needs every field populated or saving would wipe it. Same open-AP trust model
+  // as the rest of the portal (OTA itself is unauthenticated).
+  root["ds_mode"] = dsync.mode;
+  root["ds_ssid"] = dsync.ssid;
+  root["ds_pass"] = dsync.pass;
+  root["ds_url"]  = dsync.url;
+  root["ds_key"]  = dsync.key;
   char gps[40] = "";
   if (deploy.hasPos) snprintf(gps, sizeof(gps), "%.5f,%.5f", deploy.lat, deploy.lon);
   root["gps"]     = gps;
@@ -198,6 +217,17 @@ static void handleDeploy() {
   int dm = d["dim"] | (int)dimMinutesEffective();                       // screen-dim timeout (min)
   if (dm < DIM_MIN_MIN) dm = DIM_MIN_MIN; else if (dm > DIM_MIN_MAX) dm = DIM_MIN_MAX;
   deploy.dimMinutes = (uint16_t)dm;
+  // DiveSync (Data offload card). URL/key fall back to the baked defaults when blanked.
+  int dsm = d["ds_mode"] | (int)dsync.mode;
+  dsync.mode = (dsm == SYNC_CLOUD) ? SYNC_CLOUD : SYNC_NONE;
+  if (d["ds_ssid"].is<const char *>()) cpy(dsync.ssid, sizeof(dsync.ssid), d["ds_ssid"]);
+  if (d["ds_pass"].is<const char *>()) cpy(dsync.pass, sizeof(dsync.pass), d["ds_pass"]);
+  const char *dsu = d["ds_url"] | "";
+  const char *dsk = d["ds_key"] | "";
+  cpy(dsync.url, sizeof(dsync.url), strlen(dsu) ? dsu : DSYNC_URL_DEFAULT);
+  cpy(dsync.key, sizeof(dsync.key), strlen(dsk) ? dsk : DSYNC_KEY_DEFAULT);
+  size_t ul = strlen(dsync.url);                       // no trailing slash (paths are appended)
+  while (ul > 0 && dsync.url[ul - 1] == '/') dsync.url[--ul] = 0;
   g_accent = accentColor(deploy.accent);        // apply immediately so the run screen retints
   readThresh(d["thresh"]);     // present -> defines bands (blank fields = disabled)
   deploy.set = true;
@@ -302,6 +332,9 @@ static void handleLogClear() {
     if (!SD.remove(target)) break;     // stop on failure rather than spin forever
     removed++;
   }
+  // The DiveSync manifest keys on filenames, and dive numbering restarts after a clear —
+  // wipe it too or every new dive0000.csv would be skipped as "already synced".
+  if (SD.exists(DSYNC_MANIFEST)) SD.remove(DSYNC_MANIFEST);
   char msg[24]; snprintf(msg, sizeof(msg), "cleared %d", removed);
   server.send(200, "text/plain", msg);
   Serial.printf("Logs cleared: %d files\n", removed);

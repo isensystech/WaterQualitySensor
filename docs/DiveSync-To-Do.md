@@ -357,20 +357,29 @@ Per-device secret → Edge Function upload proxy verifying `mac + secret` agains
 
 ## Acceptance criteria (v1.x)
 
-- [ ] Portal SETTINGS card: None / Local / Cloud all selectable and persisted via
-      the existing `/api/deploy` unified save model
-- [ ] Firmware detects base AP only when surfaced and not logging
+> **Status (2026-07-15):** Phases 1/2/4-cloud are IMPLEMENTED in firmware v0.10.0
+> (`src/divesync.cpp` + SETTINGS "Data offload" card) but NOT yet field-validated —
+> the checkboxes below stay open until a real unit proves them in the water.
+> Phase 3 (deep sleep) is deliberately deferred to the next rev: sync gets validated
+> first, and an un-slept unit simply behaves like v0.9.x (no regression). "Local base
+> station" appears in the dropdown but is disabled until the base station stack exists.
+
+- [ ] Portal SETTINGS card: None / Cloud selectable and persisted via the existing
+      `/api/deploy` unified save model (Local greyed out until the base station lands)
+- [ ] Firmware detects the AP only when surfaced and not logging
 - [ ] All unsynced `/dive*.csv` files POST successfully, or the unit skips gracefully
       on timeout without hanging
 - [ ] Sync manifest prevents re-upload of already-synced files across reboots
-- [ ] Idle timer (10–30 min, no button press) triggers deep sleep
-- [ ] Deep sleep sequence: WiFi off, sensors quiesced, backlight off, light sleep
-      with RTC timer wake armed
-- [ ] Button press wakes immediately at any point in the sequence
-- [ ] **Dive loop is provably untouched** — no new WiFi/sleep behavior triggers while
+      (upload names are `c<cast>_<file>` so a post-"Clear logs" card can't collide
+      with older uploads; the clear also wipes the manifest)
+- [ ] (deferred) Idle timer (10–30 min, no button press) triggers deep sleep
+- [ ] (deferred) Deep sleep sequence: WiFi off, sensors quiesced, backlight off,
+      light sleep with RTC timer wake armed
+- [ ] Button press cancels a sync in flight immediately
+- [ ] **Dive loop is provably untouched** — no new WiFi behavior triggers while
       `g_logging || g_submerged`
-- [ ] Field test: diver docks unit near base AP, walks away without touching
-      anything, unit syncs and sleeps unattended
+- [ ] Field test: diver docks unit near the hotspot, walks away without touching
+      anything, unit syncs unattended
 
 **Cloud (Supabase) base functionality:**
 

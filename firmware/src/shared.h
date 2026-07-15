@@ -80,7 +80,13 @@
 //       the play loop stops on rc<=0 and hard-caps frames+time so no GIF can wedge the boot; the final
 //       frame / fallback logo is now held (SPLASH_HOLD_MS) instead of being wiped instantly by the sensor screen.
 //       Also swaps the run-screen button gestures (field feedback): quick press flips the page, hold drops a POI.
-#define FW_VERSION         "0.9.4"
+// 0.10.0 adds DiveSync cloud offload (divesync.cpp): a surface-only state machine that joins a
+//       configured internet Wi-Fi after a dive and uploads unsynced dive*.csv files to Supabase
+//       (storage POST + PostgREST metadata row, per docs/DiveSync-To-Do.md Phase 4 REVISED
+//       contract: plain POST, 409 = already synced). New SETTINGS "Data offload" card; on-SD
+//       manifest (/sync.csv) prevents re-uploads. Deep sleep (Phase 3) deliberately NOT in this
+//       rev — sync first, validate in the field, then sleep.
+#define FW_VERSION         "0.10.0"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.
@@ -106,6 +112,33 @@ struct CalData {
 // ---- screen-2 metric thresholds (set per-mission in the portal; NAN = bound disabled) ----
 enum MetricId { M_TEMP, M_PH, M_ORP, M_EC, M_SAL, M_DEPTH, M_CYC, M_COUNT };
 struct Threshold { float warnLo, warnHi, alarmLo, alarmHi; };
+
+// ---- DiveSync: autonomous post-dive offload to the cloud (divesync.cpp) ----
+// Surface-only by hard rule: the state machine runs ONLY when !g_logging && !g_submerged and the
+// portal AP is down (it is torn down at the first dive). The dive loop is untouched.
+// Defaults point at the project's Supabase; the publishable key is public-by-design (RLS gates
+// all data access) — it is NOT a secret. Portal SETTINGS can override everything.
+#define DSYNC_URL_DEFAULT     "https://gwaxsksjierpzbxugbxj.supabase.co"
+#define DSYNC_KEY_DEFAULT     "sb_publishable_f6xnKDgjeStNYV-H19VPtg_WqOcwiCw"
+#define DSYNC_CHECK_MS        20000UL     // surface idle: gate/scan cadence
+#define DSYNC_SCAN_MS         12000UL     // async Wi-Fi scan deadline
+#define DSYNC_CONNECT_MS      15000UL     // STA join deadline
+#define DSYNC_HTTP_MS         20000UL     // per-request response deadline
+#define DSYNC_CHUNK           1024        // SD -> TLS bytes per loop pass (keeps sampling alive)
+#define DSYNC_FAIL_BACKOFF_MS 120000UL    // first retry delay after a failure (doubles each fail)
+#define DSYNC_BACKOFF_MAX_MS  1800000UL   // backoff cap (30 min)
+#define DSYNC_MANIFEST        "/sync.csv" // append-only: filename,epoch,status
+
+enum SyncMode : uint8_t { SYNC_NONE = 0, SYNC_CLOUD = 1 };  // SYNC_LOCAL arrives with the base station
+
+struct DiveSyncCfg {          // persisted via state.json (ds_* keys); runtime state stays in divesync.cpp
+  uint8_t mode;               // SyncMode; default SYNC_NONE = zero behavior change for existing units
+  char    ssid[33];           // internet AP to join on the surface (NOT the logger's own AP)
+  char    pass[65];
+  char    url[96];            // https://<ref>.supabase.co — no trailing slash
+  char    key[56];            // sb_publishable_...
+};
+extern DiveSyncCfg dsync;
 
 struct Deployment {
   char     mission[32];
@@ -210,6 +243,13 @@ float specCond25_mS(float c_mS, float T);
 float orpEh_mV(int32_t orp_uV);
 float salinityPSU(float c_mS, float T, float P_mbar);
 float cycConc(float volts);
+
+// DiveSync (divesync.cpp) — post-dive cloud offload
+void diveSyncDefaults();          // bake in DSYNC_*_DEFAULT; call BEFORE stateLoad() overrides
+void diveSyncLoop();              // call once per loop(); no-op unless surfaced + idle + mode set
+bool diveSyncBusy();              // true while scanning/joining/uploading (footer indicator)
+void diveSyncCancel(const char *why);   // button press / portal request aborts a sync in flight
+void diveSyncKick();              // dive just closed: reset backoff so sync tries promptly
 
 // setup portal (WiFi UTC sync + deployment header + thresholds + accent)
 void portalBegin();
