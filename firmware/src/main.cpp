@@ -11,6 +11,7 @@ bool      g_bar30Ok = false, g_celsOk = false;
 float     g_celsT = NAN;            // latest Celsius (TSYS01) temperature; NaN when unusable
 PoetResult g_poet = {0,0,0,0,0};
 bool      g_poetOk = false, g_submerged = false, g_sdReady = false, g_logging = false;
+bool      g_logForce = false;   // 3 s button hold: logging forced on with no water (bench override)
 float     g_P = 0, g_depth = 0, g_barT = 0, g_ascent = 0, g_lastDepth = 0;
 uint32_t  g_sampleCount = 0, g_poiCount = 0, g_lastSampleMs = 0;
 uint8_t   g_page = 0;
@@ -27,7 +28,7 @@ static File     g_logFile;
 static char     g_logPath[16] = "";
 static int      g_subStreak = 0, g_surfStreak = 0;
 static uint32_t g_poiBannerUntil = 0;
-static uint8_t  g_bannerKind = 0;        // 0 = POI logged, 1 = idle acknowledgement
+static uint8_t  g_bannerKind = 0;        // 0 = POI logged, 1 = idle ack, 2 = manual log ON, 3 = manual log OFF
 volatile bool   g_reqCal = false;
 volatile bool   g_uiDirty = false;
 bool            g_recovery = false;      // upload-only recovery AP mode (set at boot, never logs/samples)
@@ -274,8 +275,11 @@ static void writeLogRow(bool poi) {
 // ---------------- submersion gate ----------------
 static void updateLoggingGate() {
   if (g_submerged) { g_subStreak++; g_surfStreak = 0; } else { g_surfStreak++; g_subStreak = 0; }
+  // Real submersion hands a manually-forced log back to this gate, so a forced log that turns
+  // into an actual dive still closes (and cloud-syncs) on its own at the surface.
+  if (g_logForce && g_submerged && g_subStreak >= SUBMERGE_DEBOUNCE) g_logForce = false;
   if (!g_logging && g_submerged && g_subStreak >= SUBMERGE_DEBOUNCE) openDiveLog();
-  if (g_logging && !g_submerged && g_surfStreak >= SURFACE_DEBOUNCE) closeDiveLog();
+  if (g_logging && !g_submerged && g_surfStreak >= SURFACE_DEBOUNCE && !g_logForce) closeDiveLog();
 }
 
 // ---------------- run-mode UI (portrait 240x320) ----------------
@@ -283,6 +287,7 @@ static void footer() {
   tft.setTextSize(1); tft.setCursor(4, SCR_H - 12);
   tft.setTextColor(g_sdReady ? ST77XX_GREEN : ST77XX_RED); tft.print(g_sdReady ? "SD " : "SD!");
   if (diveSyncBusy()) { tft.setTextColor(ST77XX_CYAN); tft.print(" SYNC "); }
+  else if (g_logging && g_logForce) { tft.setTextColor(ST77XX_YELLOW); tft.print(" LOG* "); }  // * = forced by 3 s hold
   else { tft.setTextColor(g_logging ? ST77XX_GREEN : ST77XX_YELLOW); tft.print(g_logging ? " LOG " : " IDLE "); }
   tft.setTextColor(g_timeSynced ? (g_timeApprox ? ST77XX_YELLOW : ST77XX_GREEN) : ST77XX_RED);
   tft.print(g_timeSynced ? (g_timeApprox ? "t~ " : "t " ) : "t! ");
@@ -360,13 +365,14 @@ void otaScreenMsg(const char *l1, const char *l2) {
   }
 }
 
-// Displayed water temperature, best source first: the dedicated Celsius sensor (highest
-// accuracy), else BAR30, else POET -- each only when enabled AND present. NaN -> tile shows "--".
-// (Salinity/EC compensation keeps using POET's own temp; this only drives the TEMP tile.)
+// Displayed water temperature -- source-of-truth order per build (v0.10.3 field rules):
+// POET when fitted, else Celsius, else BAR30 -- each only when enabled AND present.
+// NaN -> tile shows "--". (This only drives the TEMP tile; salinity/EC compensation
+// always uses POET's own temp.)
 static float dispTempC() {
+  if (deploy.poet_en  && g_poetOk)                     return g_poet.temp_mC / 1000.0f;
   if (deploy.cels_en  && g_celsOk  && !isnan(g_celsT)) return g_celsT;
   if (deploy.bar30_en && g_bar30Ok)                    return g_barT;
-  if (deploy.poet_en  && g_poetOk)                     return g_poet.temp_mC / 1000.0f;
   return NAN;
 }
 
@@ -427,7 +433,7 @@ static void waterPage() {
   tft.fillScreen(ST77XX_BLACK);
   bool live = g_submerged && g_poetOk && deploy.poet_en;
   float Tc  = live ? g_poet.temp_mC / 1000.0f : NAN;   // POET temp: drives EC/salinity compensation
-  float Td  = dispTempC();                             // displayed temp: Celsius-preferred
+  float Td  = dispTempC();                             // displayed temp: POET > Celsius > BAR30
   float ecR = live ? conductivity_mS(g_poet.ec_uV, g_poet.ec_nA) : NAN;
   float ph  = live ? phFromUgs(g_poet.ugs_uV, Tc) : NAN;
   float ec  = live ? specCond25_mS(ecR, Tc) : NAN;
@@ -476,7 +482,8 @@ void renderRun() {
     tft.drawRoundRect(20, 132, 200, 56, 8, ST77XX_WHITE);
     char m[16]; uint8_t ts = poi ? 3 : 2; int cw = poi ? 18 : 12;
     if (poi) snprintf(m, sizeof(m), "POI #%lu", (unsigned long)g_poiCount);
-    else     strcpy(m, "NOT LOGGING");
+    else     strcpy(m, g_bannerKind == 2 ? "LOGGING ON" :
+                       g_bannerKind == 3 ? "LOGGING OFF" : "NOT LOGGING");
     tft.setTextColor(ST77XX_WHITE); tft.setTextSize(ts);
     tft.setCursor(20 + (200 - (int)strlen(m) * cw) / 2, 132 + (56 - ts * 8) / 2); tft.print(m);
   }
@@ -493,22 +500,36 @@ void runHandleNav(NavEvent e) {
       Serial.print("POI #"); Serial.println(g_poiCount); }
     else { g_bannerKind = 1; Serial.println("long press (not logging)"); }
     renderRun();
+  } else if (e == NAV_HOLD3) {          // manual logging on/off -- overrides the submerge gate
+    // (bench tests / not enough water column for the BAR30 trigger). Stopping resets the wet
+    // streak so a unit still sitting in water gets a full debounce of grace before auto-reopen.
+    if (g_logging) { g_logForce = false; g_subStreak = 0; closeDiveLog(); g_bannerKind = 3;
+      Serial.println("manual log OFF"); }
+    else { openDiveLog(); g_logForce = g_logging;         // stays false if SD refused the open
+      g_bannerKind = g_logging ? 2 : 1;
+      Serial.println(g_logging ? "manual log ON" : "manual log ON refused (SD)"); }
+    g_poiBannerUntil = millis() + POI_BANNER_MS;
+    renderRun();
   }
 }
 
 // ---------------- button -> NavEvent (responsive: long fires at threshold, short on release) ----------------
+// One press can emit two events (NAV_LONG at 900 ms, then NAV_HOLD3 at 3 s if still held);
+// g_pressSwallowed lets loop() swallow the WHOLE press when it only served to wake the screen.
+static bool g_pressSwallowed = false;
 static void buttonPoll() {
   static bool rawLast = false, stable = false;
   static uint32_t tEdge = 0, tDown = 0;
-  static bool longSent = false;
+  static bool longSent = false, hold3Sent = false;
   bool raw = (digitalRead(PIN_BUTTON) == LOW);     // active-low (provisional)
   if (raw != rawLast) { rawLast = raw; tEdge = millis(); }
   if (millis() - tEdge > BTN_DEBOUNCE_MS && raw != stable) {
     stable = raw;
-    if (stable) { tDown = millis(); longSent = false; }
+    if (stable) { tDown = millis(); longSent = false; hold3Sent = false; g_pressSwallowed = false; }
     else if (!longSent && (millis() - tDown) >= BTN_DEBOUNCE_MS) g_nav = NAV_SHORT;
   }
-  if (stable && !longSent && (millis() - tDown) >= BTN_LONG_MS) { longSent = true; g_nav = NAV_LONG; }
+  if (stable && !longSent  && (millis() - tDown) >= BTN_LONG_MS)     { longSent  = true; g_nav = NAV_LONG; }
+  if (stable && !hold3Sent && (millis() - tDown) >= BTN_FORCELOG_MS) { hold3Sent = true; g_nav = NAV_HOLD3; }
 }
 
 static void drawStatus(const char *l1, const char *l2 = "", const char *l3 = "") {
@@ -847,8 +868,13 @@ static uint32_t g_poetT0 = 0;
 static void sampleFinish() {
   bar30.read();
   g_P = bar30.pressure(); g_barT = bar30.temperature(); g_depth = bar30.depth();
-  g_poetOk = poetFetch(g_poet);
-  g_submerged = g_poetOk && (g_poet.ec_nA > EC_SUBMERGED_NA);
+  g_poetOk = deploy.poet_en && poetFetch(g_poet);   // no kick was sent when disabled -> don't read stale data
+  // Submerge detect: POET EC current when fitted, else BAR30 depth (a Celsius+BAR30-only
+  // variant has no EC to sense water). Either signal wet -> submerged, so a mid-dive POET
+  // glitch can't end a logging run while the unit is demonstrably at depth.
+  bool ecWet    = deploy.poet_en  && g_poetOk  && (g_poet.ec_nA > EC_SUBMERGED_NA);
+  bool depthWet = deploy.bar30_en && g_bar30Ok && (g_depth > DEPTH_SUBMERGED_M);
+  g_submerged = ecWet || depthWet;
   if (g_cycOk) g_cycV = ads.computeVolts(ads.readADC_SingleEnded(CYC_ADC_CH)) * CYC_DIVIDER;  // 0-5 V at sensor
   g_celsT = (deploy.cels_en && g_celsOk) ? celsReadResult() : NAN;   // conversion was kicked at sample start
 
@@ -882,8 +908,10 @@ void loop() {
   NavEvent e = g_nav; g_nav = NAV_NONE;
   if (e != NAV_NONE) {
     if (diveSyncBusy()) diveSyncCancel("button");   // any press aborts a sync in flight (doc rule)
-    if (backlightWake()) {
-      // Screen was dimmed/off: this press only wakes it -- swallow it (no POI, no page flip).
+    if (backlightWake() || g_pressSwallowed) {
+      // Screen was dimmed/off: the press only wakes it -- swallow EVERY event it emits
+      // (no POI, no page flip, and no log toggle from the 3 s tail of the same hold).
+      g_pressSwallowed = true;
     } else if (g_mode == MODE_CAL) {
       calHandleNav(e);
     } else {
@@ -904,10 +932,12 @@ void loop() {
   switch (g_state) {
     case S_IDLE:
       if (millis() - g_lastSampleMs >= SAMPLE_MS) {
-        if (poetStart()) {
-          if (deploy.cels_en && g_celsOk) celsStartConv();   // TSYS01 result read in sampleFinish()
-          g_poetT0 = millis(); g_state = S_POET_WAIT;
-        }
+        // The cycle must advance with or without a POET -- gating it on poetStart() deadlocked
+        // every no-POET build (no samples, no rows, portal never dropped). A NACKed kick just
+        // leaves this sample's POET columns blank.
+        if (deploy.poet_en) poetStart();
+        if (deploy.cels_en && g_celsOk) celsStartConv();   // TSYS01 result read in sampleFinish()
+        g_poetT0 = millis(); g_state = S_POET_WAIT;
       }
       break;
     case S_POET_WAIT:

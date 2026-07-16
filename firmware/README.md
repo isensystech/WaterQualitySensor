@@ -35,7 +35,9 @@ absent sensor blanks independently (`--` on screen, empty CSV column) rather tha
 ## Features
 
 - **Single-button UI** — every gesture works with the one `D0` push button (no touch).
-- **Submerge-gated logging** — DIVE / DATA run screens; logs `dive*.csv` to microSD.
+- **Submerge-gated logging** — starts on POET conductivity or BAR30 depth (>0.5 m), whichever
+  is fitted; DIVE / DATA run screens; logs `dive*.csv` to microSD. A 3-second button hold
+  forces logging on/off for bench tests without water (footer shows `LOG*` while forced).
 - **On-device calibration** — pH (3-pt), EC (1-pt), ORP (1-pt), Cyclops (2-pt), with a
   `callog.csv` audit trail.
 - **Captive-portal setup** — SoftAP web app for settings, mission config, thresholds, and

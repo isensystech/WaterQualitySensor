@@ -45,9 +45,13 @@
 #define POET_WAIT_MS       2788
 #define BTN_DEBOUNCE_MS    25
 #define BTN_LONG_MS        900
+#define BTN_FORCELOG_MS    3000       // hold in run mode -> manual logging on/off (bench override)
 #define BTN_BOOTHOLD_MS    1500       // hold at power-on -> calibration mode
 #define BTN_RECOVERY_MS    3000       // KEEP holding past the CAL window -> firmware-recovery AP
 #define EC_SUBMERGED_NA    50L
+#define DEPTH_SUBMERGED_M  0.5f      // BAR30 submerge trigger (no-POET variants); in air "depth" can
+                                     // read up to ~+0.3 m under a strong high-pressure system, so
+                                     // stay above that or a unit on the bench starts a dive log
 #define SUBMERGE_DEBOUNCE  3
 #define SURFACE_DEBOUNCE   3
 #define POI_BANNER_MS      2000
@@ -86,7 +90,14 @@
 //       contract: plain POST, 409 = already synced). New SETTINGS "Data offload" card; on-SD
 //       manifest (/sync.csv) prevents re-uploads. Deep sleep (Phase 3) deliberately NOT in this
 //       rev — sync first, validate in the field, then sleep.
-#define FW_VERSION         "0.10.0"
+// 0.10.1-0.10.3 (see CHANGELOG.md): BAR30-depth submerge fallback, 3 s-hold manual logging
+//       override, no-POET sampler deadlock fix + POET-first displayed temp.
+// 0.10.4 makes DiveSync field-debuggable: the silent "SSID not seen" path now logs the full scan
+//       result to serial, a live one-line sync status shows in the portal Data offload card
+//       (/api/state ds_stat), and a "Scan for networks" picker (/api/wifiscan, AP_STA) lists the
+//       2.4 GHz networks the C6 actually sees — typos and 5 GHz-only/dormant hotspots surface
+//       immediately instead of failing silently.
+#define FW_VERSION         "0.10.4"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.
@@ -97,7 +108,7 @@
 // ---------------- types ----------------
 struct PoetResult { int32_t temp_mC, orp_uV, ugs_uV, ec_nA, ec_uV; };
 
-enum NavEvent { NAV_NONE, NAV_SHORT, NAV_LONG };
+enum NavEvent { NAV_NONE, NAV_SHORT, NAV_LONG, NAV_HOLD3 };
 enum AppMode  { MODE_RUN, MODE_CAL };
 enum BootMode { BOOT_NORMAL, BOOT_CAL, BOOT_RECOVERY };   // power-on button gesture outcome
 
@@ -174,7 +185,7 @@ enum TileState { T_OK, T_WARN, T_ALARM };
 extern Adafruit_ST7789 tft;
 extern MS5837    bar30;
 extern PoetResult g_poet;
-extern bool      g_poetOk, g_submerged, g_sdReady, g_logging;
+extern bool      g_poetOk, g_submerged, g_sdReady, g_logging, g_logForce;
 extern float     g_P, g_depth, g_barT, g_ascent;
 extern uint32_t  g_sampleCount, g_poiCount;
 extern uint8_t   g_page;
@@ -250,6 +261,7 @@ void diveSyncLoop();              // call once per loop(); no-op unless surfaced
 bool diveSyncBusy();              // true while scanning/joining/uploading (footer indicator)
 void diveSyncCancel(const char *why);   // button press / portal request aborts a sync in flight
 void diveSyncKick();              // dive just closed: reset backoff so sync tries promptly
+const char *diveSyncStatusText(); // one-line live status for the portal Data offload card
 
 // setup portal (WiFi UTC sync + deployment header + thresholds + accent)
 void portalBegin();

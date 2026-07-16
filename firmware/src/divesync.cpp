@@ -59,6 +59,17 @@ static struct {
 
 bool diveSyncBusy() { return s_ph != DS_IDLE; }
 
+// One-line human status, shown live in the portal's Data offload card (/api/state ds_stat)
+// and updated at every phase transition — so a field user can see WHY a sync isn't happening
+// without a serial cable (v0.10.4: the "SSID not seen" path used to be completely silent).
+static char s_status[64] = "idle";
+const char *diveSyncStatusText() { return s_status; }
+static void setStatus(const char *fmt, ...) {
+  va_list ap; va_start(ap, fmt);
+  vsnprintf(s_status, sizeof(s_status), fmt, ap);
+  va_end(ap);
+}
+
 // ---------------- small helpers ----------------
 static void macHex(char out[13]) {              // base (STA) MAC, lowercase hex, no colons
   uint8_t m[6]; esp_read_mac(m, ESP_MAC_WIFI_STA);
@@ -213,6 +224,7 @@ static void dsFail(const char *why) {           // recoverable: back off and ret
   radioOff();
   s_backoff = s_backoff ? min(s_backoff * 2, DSYNC_BACKOFF_MAX_MS) : DSYNC_FAIL_BACKOFF_MS;
   s_next = millis() + s_backoff;
+  setStatus("failed: %s (retry in %lu min)", why, (unsigned long)(s_backoff / 60000UL));
   s_ph = DS_IDLE;
 }
 
@@ -225,6 +237,7 @@ static void dsQuiet(uint32_t delayMs) {         // no-fault retreat (AP not in r
 void diveSyncCancel(const char *why) {
   if (s_ph == DS_IDLE) return;
   Serial.printf("DiveSync: cancelled (%s)\n", why);
+  setStatus("cancelled (%s)", why);
   dsQuiet(DSYNC_CHECK_MS);
 }
 
@@ -268,6 +281,7 @@ static bool startFile() {
   s_ph = DS_PUMP;
   Serial.printf("DiveSync: uploading %s (%lu bytes) as %s\n",
                 s_fname, (unsigned long)s_file.size(), s_obj);
+  setStatus("uploading %s", s_fname);
   return true;
 }
 
@@ -305,9 +319,11 @@ static void fileDone(const char *status) {
   s_tls.stop();
   s_done++;
   Serial.printf("DiveSync: %s -> %s\n", s_fname, status);
+  if (!strcmp(status, "REJECTED")) setStatus("%s REJECTED - MAC not on allowlist", s_fname);
   // more files? stay on this Wi-Fi and start the next one; else wrap up
   if (dsAllowed() && nextUnsynced(s_fname, sizeof(s_fname))) { startFile(); return; }
   Serial.printf("DiveSync: pass complete, %u file(s) handled\n", s_done);
+  if (strcmp(status, "REJECTED")) setStatus("synced %u file(s)", s_done);
   s_backoff = 0;
   dsQuiet(DSYNC_CHECK_MS);
 }
@@ -329,6 +345,7 @@ void diveSyncLoop() {
       s_done = 0;
       s_ph = DS_SCAN;
       Serial.printf("DiveSync: %s pending, scanning for '%s'\n", s_fname, dsync.ssid);
+      setStatus("scanning for '%s'", dsync.ssid);
       break;
     }
 
@@ -340,8 +357,20 @@ void diveSyncLoop() {
       }
       bool found = false;
       for (int i = 0; i < n && !found; i++) found = (WiFi.SSID(i) == dsync.ssid);
+      if (!found) {
+        // This path was SILENT before v0.10.4 and it is the most common field failure
+        // (5 GHz-only hotspot, dormant hotspot, SSID typo) — say exactly what we saw.
+        Serial.printf("DiveSync: '%s' NOT seen in scan (%d networks):\n", dsync.ssid, n);
+        for (int i = 0; i < n && i < 10; i++)
+          Serial.printf("  %s (%d dBm)\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i));
+        setStatus("'%s' not seen (%d nearby)", dsync.ssid, n);
+        WiFi.scanDelete();
+        dsQuiet(60000UL);                                      // out of range: quiet retry, no backoff
+        return;
+      }
       WiFi.scanDelete();
-      if (!found) { dsQuiet(60000UL); return; }                // out of range: quiet retry, no backoff
+      Serial.printf("DiveSync: '%s' found, joining\n", dsync.ssid);
+      setStatus("joining '%s'", dsync.ssid);
       WiFi.begin(dsync.ssid, dsync.pass);
       WiFi.setTxPower(WIFI_POWER_8_5dBm);                      // same brownout guard as the AP side
       s_deadline = millis() + DSYNC_CONNECT_MS;
@@ -352,7 +381,7 @@ void diveSyncLoop() {
     case DS_JOIN:
       if (WiFi.status() == WL_CONNECTED) { startFile(); return; }
       if (WiFi.status() == WL_CONNECT_FAILED || (int32_t)(millis() - s_deadline) > 0)
-        dsFail("wifi join");
+        dsFail("join failed - check password");
       return;
 
     case DS_PUMP: {

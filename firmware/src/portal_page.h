@@ -160,11 +160,19 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <option value=2 disabled>Local base station (coming soon)</option>
 </select>
 <div id=ds_cloud style="display:none">
-<label>Internet Wi-Fi network (hotspot / home Wi-Fi)</label><input id=ds_ssid placeholder="network name (SSID)">
+<label>Internet Wi-Fi network (hotspot / home Wi-Fi)</label>
+<button class=b2 type=button onclick=dsScan()>Scan &mdash; show networks the logger sees</button>
+<select id=ds_pick style="display:none" onchange="if(this.value)id('ds_ssid').value=this.value"></select>
+<input id=ds_ssid placeholder="network name (SSID)">
 <label>Wi-Fi password</label><input id=ds_pass type=password autocomplete=off>
 <label>Cloud URL (blank = default)</label><input id=ds_url placeholder="https://xxxx.supabase.co">
 <label>API key (blank = default)</label><input id=ds_key placeholder="sb_publishable_...">
+<p class=hint><b>Hotspot tips:</b> the logger only sees <b>2.4&nbsp;GHz</b> networks &mdash; on iPhone turn on
+<b>Maximize Compatibility</b>; on Android pick the 2.4&nbsp;GHz band. A phone hotspot with nothing connected
+and its screen off <b>stops broadcasting</b> &mdash; keep the hotspot screen open while the logger syncs.
+If Scan doesn't list your network, the logger can't join it &mdash; fix that first.</p>
 </div>
+<p class=hint id=ds_stat></p>
 <p class=hint>When you surface after a dive, the logger looks for this network and uploads any
 new dives on its own &mdash; dock it near the hotspot and walk away. It never touches Wi-Fi while
 diving, a button press cancels a sync in progress, and the footer shows <b>SYNC</b> while it runs.
@@ -231,9 +239,11 @@ Uploaded files stay on the card.</p></div>
 <tr><th>Action</th><th>What happens</th></tr>
 <tr><td><b>Quick press</b> (tap)</td><td>Flips between the two screens (<b>DIVE</b> and <b>WATER</b>).</td></tr>
 <tr><td><b>Hold &amp; release</b></td><td>Drops a <b>marker</b> (POI &mdash; point of interest) into the log at this exact moment. A blue <span class=k>POI #</span> badge confirms it.</td></tr>
+<tr><td><b>Hold 3&nbsp;seconds</b></td><td>Forces recording <b>on or off</b> by hand &mdash; for bench tests or when there isn't enough water for the automatic start. Keep holding through the first badge until <span class=k>LOGGING ON</span> or <span class=k>LOGGING OFF</span> appears.</td></tr>
 <tr><td><b>Hold during power-on</b></td><td>Enters <b>Calibration</b> mode (see the Calibration topic).</td></tr>
 </table>
 <p>If you hold to mark a point but the logger isn't recording yet, it shows <span class=k>NOT LOGGING</span> so you know nothing was saved.</p>
+<p><b>About the 3-second hold:</b> while recording is forced on, the status line shows <span class="pill py">LOG*</span> and Wi-Fi switches off, just like a real dive. If the logger then really goes underwater, control hands back to automatic &mdash; it will still stop by itself when you surface. To stop a forced recording, hold 3&nbsp;seconds again. (Holding while already recording drops a POI marker on the way to the stop &mdash; it's harmless.)</p>
 </div></details>
 
 <details><summary>&#128250; Reading the screen</summary><div class=db>
@@ -251,7 +261,7 @@ Uploaded files stay on the card.</p></div>
 <p>A reading shows <code>--</code> when there's nothing to show yet &mdash; usually the logger isn't in water, or that sensor isn't connected or is switched off under <b>Settings</b>.</p>
 <p><b>The status line</b> along the bottom is a quick health check:</p>
 <p><span class="pill pg">SD</span> card OK &bull; <span class="pill pr">SD!</span> card problem, data may not be saving.</p>
-<p><span class="pill pg">LOG</span> recording &bull; <span class="pill py">IDLE</span> not recording.</p>
+<p><span class="pill pg">LOG</span> recording &bull; <span class="pill py">LOG*</span> recording forced on by the 3-second hold &bull; <span class="pill py">IDLE</span> not recording.</p>
 <p><span class="pill pg">t</span> clock set &bull; <span class="pill py">t~</span> approximate &bull; <span class="pill pr">t!</span> no time yet (sync from your phone).</p>
 <p><span class="pill pg">POI:</span> markers this dive &bull; <span class="pill pg">n:</span> readings taken.</p>
 <p><span class="pill pg">WET</span> in water &bull; <span class="pill pr">AIR</span> out of water.</p>
@@ -262,7 +272,7 @@ Uploaded files stay on the card.</p></div>
 <ul>
 <li><b>POET</b> &mdash; pH, ORP, conductivity and salinity.</li>
 <li><b>BAR30</b> &mdash; depth, pressure and temperature.</li>
-<li><b>Celsius</b> &mdash; an optional high-accuracy temperature probe. When it's fitted, it becomes the temperature shown on screen.</li>
+<li><b>Celsius</b> &mdash; an optional high-accuracy temperature probe. It becomes the temperature shown on screen when no POET is fitted (with a POET, the POET's own reading leads; with neither, the BAR30's).</li>
 <li><b>Cyclops</b> &mdash; the optional fluorometer.</li>
 </ul>
 <p><b>It sets itself up.</b> On power-up the logger checks the cable and <b>switches on every sensor it finds</b>, so usually there's nothing to do. Each card shows a <span class=okd>green</span> frame when that sensor is detected and a <span class=badd>red</span> frame when it isn't &mdash; a quick way to confirm everything's plugged in.</p>
@@ -273,7 +283,7 @@ Uploaded files stay on the card.</p></div>
 
 <details><summary>&#127754; During a dive</summary><div class=db>
 <ul>
-<li><b>Recording is automatic.</b> The logger senses when it's underwater, starts a new file, and closes it when you surface.</li>
+<li><b>Recording is automatic.</b> The logger senses when it's underwater, starts a new file, and closes it when you surface. (Need it recording <i>without</i> water &mdash; a bench test, a shallow tray? Hold the button <b>3&nbsp;seconds</b> to force it on; see The push button.)</li>
 <li><b>Mark interesting spots</b> with a quick press (a fish, a pipe, a colour change). Each marker is saved with its timestamp and all the readings at that instant.</li>
 <li><b>Watch the ascent number.</b> Coming up too fast turns the rate tile amber, then red. Slow is safer for you <i>and</i> the sensors.</li>
 <li>Wi-Fi switches off once a dive begins (useless underwater, saves battery), so this page isn't reachable mid-dive. It returns on the surface.</li>
@@ -377,6 +387,7 @@ Uploaded files stay on the card.</p></div>
 <table>
 <tr><th>You see&hellip;</th><th>Likely fix</th></tr>
 <tr><td>Readings show <code>--</code></td><td>Not in water (status <span class="pill pr">AIR</span>), or that sensor isn't connected or is switched off. Submerge it, check the plug, or re-enable it under <b>Settings &rarr; Sensors</b> (<b>Re-scan</b> to detect it).</td></tr>
+<tr><td>Won't start recording in shallow water / a bucket</td><td>Automatic start needs the conductivity sensor (POET) to feel the water, or about <b>half a metre</b> of depth on the BAR30. Hold the button <b>3&nbsp;seconds</b> to force recording on (and 3&nbsp;seconds again to stop).</td></tr>
 <tr><td><span class="pill pr">SD!</span></td><td>Card problem. Re-seat the microSD or try another card. Data isn't saving until this clears.</td></tr>
 <tr><td><span class="pill pr">t!</span> or <span class="pill py">t~</span></td><td>Clock not set / approximate. Connect your phone and re-sync time on the home screen.</td></tr>
 <tr><td>Tiles turn red</td><td>A reading crossed an alarm limit &mdash; or your limits need adjusting under Settings.</td></tr>
@@ -492,6 +503,7 @@ if(s.ds_ssid!=null)id('ds_ssid').value=s.ds_ssid;
 if(s.ds_pass!=null)id('ds_pass').value=s.ds_pass;
 if(s.ds_url!=null)id('ds_url').value=s.ds_url;
 if(s.ds_key!=null)id('ds_key').value=s.ds_key;
+if(s.ds_stat&&+s.ds_mode===1)id('ds_stat').innerHTML='<b>Sync status:</b> '+esc(s.ds_stat);
 dsModeUI();
 if(s.thresh)TM.forEach(function(m){var o=s.thresh[m]||{};TB.forEach(function(b){if(o[b]!=null)id(m+'_'+b).value=o[b];});});
 var t=id('ts'),good=(s.synced&&!s.approx);
@@ -506,6 +518,11 @@ d.textContent=ok?'detected':'not found';d.className='det '+(ok?'okd':'badd');}
 function paintDetect(d){if(!d)return;setSens('poet',d.poet);setSens('bar30',d.bar30);setSens('cels',d.cels);setSens('cyc',d.cyc);}
 function scanSensors(){fetch('/api/scan').then(r=>r.json()).then(paintDetect).catch(e=>{});}
 function dsModeUI(){id('ds_cloud').style.display=(+V('ds_mode')===1)?'block':'none';}
+function dsScan(){var p=id('ds_pick');p.style.display='block';p.innerHTML='<option value="">scanning (a few seconds)…</option>';
+fetch('/api/wifiscan').then(r=>r.json()).then(function(a){p.innerHTML='';
+var o0=document.createElement('option');o0.value='';o0.textContent=a.length?('pick a network ('+a.length+' seen)…'):'no 2.4 GHz networks seen — check hotspot band/screen';p.appendChild(o0);
+a.forEach(function(n){var o=document.createElement('option');o.value=n.ssid;o.textContent=n.ssid+'  ('+n.rssi+' dBm)';p.appendChild(o);});})
+.catch(function(){p.innerHTML='<option value="">scan failed — try again</option>';});}
 function payload(){return {mission:V('mission'),op:V('op'),site:V('site'),wt:V('wt'),accent:parseInt(V('accent')),gps:parseGps(V('gps')),wx:V('wx'),notes:V('notes'),
 poet_en:id('poet_en').checked,bar30_en:id('bar30_en').checked,cels_en:id('cels_en').checked,
 cyc_en:id('cyc_en').checked,cyc_u:V('cyc_u'),cyc_s:parseFloat(V('cyc_s')),dim:clampDim(V('dim')),

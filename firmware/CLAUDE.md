@@ -50,20 +50,24 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
 
 - **`main.cpp`** — `setup()`/`loop()`, boot sensor self-test, boot-splash player (AnimatedGIF
   `/splash.gif` from SD, one pass + GFX static fallback), backlight PWM + auto-dim,
-  sensor sampling, submerge/logging gate, run-screen rendering (DIVE / DATA pages).
+  sensor sampling, submerge/logging gate (wet = POET EC **or** BAR30 depth > `DEPTH_SUBMERGED_M`,
+  so no-POET variants still trigger; a 3 s button hold force-toggles logging — `g_logForce` —
+  which suppresses auto-close until real submersion hands control back to the gate),
+  run-screen rendering (DIVE / DATA pages).
 - **`divesync.cpp`** (v0.10.0) — DiveSync cloud offload: surface-only state machine that joins a
   configured internet Wi-Fi after a dive and uploads unsynced `dive*.csv` to Supabase (storage
   POST + PostgREST metadata row parsed from the file's own `#` header; manifest `/sync.csv`).
   Hard-gated on `!g_logging && !g_submerged && !portalActive()`; button press cancels. The cloud
   contract lives in docs/DiveSync-To-Do.md Phase 4 (REVISED: plain POST, 409 = already synced).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.9.3` — `0.8.0` added OTA, `0.8.1`
-  added the firmware-update HELP topic, `0.9.0` added per-sensor enable toggles + I2C auto-detect
-  and the Blue Robotics Celsius (TSYS01) sensor, `0.9.1` added in-browser dive-log charts in the
-  portal Download view, `0.9.2` replaces an uncalibrated POET channel's bare `--` run-screen tile
-  with an amber `CALIBRATE` prompt so divers know the slot is blank because it needs calibrating,
-  `0.9.3` adds the boot-splash player + a SETTINGS "Splash / branding" card that uploads a new GIF
-  over the AP (`/api/splash`, apply = reboot)).
+  `FW_VERSION` is defined **canonically here** (currently `0.10.4` — full history in
+  `CHANGELOG.md`; recent: `0.9.4` fixed the splash decoder + swapped tap/hold (tap = page flip,
+  hold = POI), `0.10.0` added DiveSync cloud offload, `0.10.1` added the BAR30-depth submerge
+  fallback so BAR30+Celsius-only variants start dives, `0.10.2` added the 3 s-hold manual
+  logging override, `0.10.3` fixed the no-POET sampler deadlock — the sample cycle was gated on
+  a POET I2C ACK, so POET-less builds never sampled — and made displayed temp POET → Celsius →
+  BAR30, `0.10.4` made DiveSync field-debuggable: live sync-status line in the Data offload
+  card, scan-outcome serial logging, and a `/api/wifiscan` pick-a-network button).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot button-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
@@ -145,8 +149,8 @@ the notes stay here because they document non-obvious design choices. RTC is the
   "Re-scan sensors" button) and a `det{}` block in `/api/state`. **Celsius** is a small inline
   TSYS01 driver in `main.cpp` (two-phase like POET — conversion kicked at sample start, read in
   `sampleFinish()`, so no run-path blocking); it adds a trailing **`cels_T_C`** CSV column and a
-  `# sensors:` provenance line, and the TEMP tile now prefers Celsius → BAR30 → POET (salinity/EC
-  math still uses POET's own temp). **CSV note:** BAR30/POET columns are now blank when those
+  `# sensors:` provenance line, and the TEMP tile follows the fleet source-of-truth rule
+  (v0.10.3): POET when fitted → Celsius → BAR30 (salinity/EC math still uses POET's own temp). **CSV note:** BAR30/POET columns are now blank when those
   sensors are disabled (previously always numeric) — downstream parsers should treat empty as N/A.
 
 - **OTA (shipped v0.8.0; firmware-update HELP topic added v0.8.1)** — "lone-diver file-mule"

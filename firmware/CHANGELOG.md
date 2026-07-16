@@ -4,6 +4,70 @@ All notable changes to the Dive WaterQuality Logger firmware are documented here
 Versions track `FW_VERSION` in [`src/shared.h`](src/shared.h) — the single source of truth.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.4] — 2026-07-16
+
+### Added
+- **DiveSync is now field-debuggable.** First live test uploaded nothing and gave no clue why —
+  the "scanned, target SSID not seen" path (the most common field failure: 5 GHz-only hotspot,
+  hotspot gone dormant with its screen off, SSID typo/curly-quote) was completely silent.
+  - Serial now prints every scan outcome, including the full list of networks seen (with RSSI)
+    when the target is missing.
+  - The portal's **Data offload card shows a live one-line sync status** (`/api/state` `ds_stat`):
+    "'X' not seen (6 nearby)", "join failed - check password", "uploading dive0003.csv",
+    "synced 2 file(s)", "dive0003.csv REJECTED - MAC not on allowlist", …
+  - **"Scan — show networks the logger sees"** button (`GET /api/wifiscan`, AP_STA keeps the
+    portal up; ~2 s blocking scan under the user-initiated rule-5 exception): pick the SSID from
+    the list instead of typing it — and if a network isn't listed, the logger can't join it,
+    which answers the band/dormancy question on the spot. Hotspot tips added to the card.
+
+## [0.10.3] — 2026-07-16
+
+### Fixed
+- **Builds without a POET never sampled at all.** The sample cycle only advanced when
+  `poetStart()` got an I2C ACK, so with no POET on the bus the state machine sat in `S_IDLE`
+  forever: no sensor reads, no log rows (a "dive" file held only its header), screen values
+  frozen at boot defaults (TEMP showed `0.0` from the never-updated BAR30 default), submersion
+  never detected, and — because the portal teardown lives in the sample path — the AP never
+  dropped, which also hard-blocked DiveSync. This masked both the v0.10.1 depth trigger and the
+  v0.10.2 manual override on exactly the variants they were built for. The cycle now advances
+  unconditionally each `SAMPLE_MS`; the POET kick is attempted only when POET is enabled, and a
+  NACK just blanks that sample's POET columns. `g_poetOk` is likewise gated on `poet_en` so a
+  disabled-but-present POET can't serve stale data.
+
+### Changed
+- **Displayed temperature source of truth** now follows the fleet build rules: **POET when
+  fitted → Celsius → BAR30** (was Celsius → BAR30 → POET). Salinity/EC compensation is
+  unchanged — it always uses POET's own temperature.
+
+## [0.10.2] — 2026-07-16
+
+### Added
+- **Manual logging override — hold the button 3 seconds** to force logging on or off, for bench
+  tests and deployments without enough water column for the automatic trigger. A `LOGGING ON` /
+  `LOGGING OFF` banner confirms the toggle and the footer shows an amber `LOG*` while forced.
+  Semantics:
+  - Forcing a log on behaves like a real dive (portal Wi-Fi drops; DiveSync stays gated until it
+    ends), and **hands back to the automatic gate once real submersion is detected**, so a
+    forced-on log still closes — and cloud-syncs — by itself at the surface.
+  - Forcing a log off resets the wet streak, so a unit still sitting in water gets a full
+    debounce (~12 s) of grace before the auto-gate reopens a fresh log.
+  - Holding while already logging drops a POI at 0.9 s on the way to the 3 s stop (the marker is
+    harmless); a press that only wakes a dimmed screen is swallowed whole — it can't toggle
+    logging.
+- HELP: the push-button table, status-line legend, dive topic and troubleshooting now cover the
+  3-second hold and the `LOG*` footer flag.
+
+## [0.10.1] — 2026-07-16
+
+### Fixed
+- **BAR30+Celsius-only variants never started a dive log.** Submersion was detected solely from
+  the POET's EC current, so with no POET fitted `g_submerged` could never go true. The gate now
+  accepts either wet signal: POET EC above `EC_SUBMERGED_NA` (when fitted **and enabled**), or
+  BAR30 depth beyond `DEPTH_SUBMERGED_M` (0.5 m — above the ~0.3 m a unit in air can read under
+  a strong high-pressure system). Side effects: a mid-dive POET read glitch no longer ends a
+  logging run while the unit is at depth, a disabled-but-fitted POET no longer drives the
+  trigger, and the DEPTH tile now shows during dives on POET-less variants.
+
 ## [0.10.0] — 2026-07-15
 
 ### Added

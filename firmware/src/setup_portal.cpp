@@ -167,6 +167,7 @@ static void handleState() {
   root["ds_pass"] = dsync.pass;
   root["ds_url"]  = dsync.url;
   root["ds_key"]  = dsync.key;
+  root["ds_stat"] = diveSyncStatusText();   // live "why isn't it syncing" line for the card
   char gps[40] = "";
   if (deploy.hasPos) snprintf(gps, sizeof(gps), "%.5f,%.5f", deploy.lat, deploy.lon);
   root["gps"]     = gps;
@@ -251,6 +252,29 @@ static void handleThresh() {
 static void handleCal() {
   g_reqCal = true;                 // main loop performs the mode switch + WiFi teardown safely
   server.send(200, "text/plain", "ok");
+}
+
+// Data offload card "Scan for networks": list the 2.4 GHz SSIDs the C6 can actually see, so the
+// user picks the exact string (kills typos/curly-quote mismatches) and instantly learns whether a
+// 5 GHz-only or dormant hotspot is invisible to the logger. AP_STA keeps the portal alive during
+// the scan; the ~2 s blocking scan is a user-initiated surface action (same rule-5 exception as OTA).
+static void handleWifiScan() {
+  WiFi.mode(WIFI_AP_STA);
+  int n = WiFi.scanNetworks(false /*blocking*/);
+  JsonDocument d; JsonArray a = d.to<JsonArray>();
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    if (!ssid.length()) continue;
+    bool dup = false;                        // dedupe multi-AP SSIDs, keep first (strongest) hit
+    for (JsonObject o : a) if (ssid == (const char *)o["ssid"]) { dup = true; break; }
+    if (dup) continue;
+    JsonObject o = a.add<JsonObject>();
+    o["ssid"] = ssid; o["rssi"] = WiFi.RSSI(i);
+  }
+  WiFi.scanDelete();
+  WiFi.mode(WIFI_AP);
+  String out; serializeJson(d, out);
+  server.send(200, "application/json", out);
 }
 
 // ---------------- log download ----------------
@@ -567,6 +591,7 @@ void portalBegin() {
   server.on("/api/sync",   HTTP_POST, handleSync);
   server.on("/api/state",  HTTP_GET,  handleState);
   server.on("/api/scan",   HTTP_GET,  handleScan);
+  server.on("/api/wifiscan", HTTP_GET, handleWifiScan);   // Data offload: pick-a-network list
   server.on("/api/deploy", HTTP_POST, handleDeploy);
   server.on("/api/thresh", HTTP_POST, handleThresh);
   server.on("/api/cal",    HTTP_POST, handleCal);
