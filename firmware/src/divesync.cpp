@@ -45,7 +45,11 @@ static File     s_file;
 static char     s_fname[20];        // "dive0007.csv" (basename on SD)
 static char     s_obj[28];          // "c0012_dive0007.csv" (cloud object / filename key)
 static uint32_t s_nl, s_hdrNl;      // newline counts: whole file / header ('#' lines)
-static char     s_resp[600];
+// MUST outrun the response HEADERS or the body is never seen. Supabase behind Cloudflare sends
+// ~790 bytes of headers (a ~300-byte set-cookie alone) before the JSON body — at the old 600 the
+// buffer filled with headers, so the "Duplicate" / "23505" markers in the body could never match
+// and an already-uploaded file wedged its retry loop forever (v0.10.9 field bug).
+static char     s_resp[1600];
 static size_t   s_respLen;
 static uint8_t  s_done;             // files synced this pass (serial summary)
 
@@ -116,6 +120,53 @@ static void manifestMark(const char *fname, const char *status) {
   f.close();
 }
 
+// ---------------- persistent attempt trace (append-only /synclog.csv: epoch,ms,event) ----------------
+// The ONLY sync record a sealed unit can surface after the fact: no serial cable, no way to pull the
+// SD, and the portal (which serves the live ds_stat) is torn down for the whole attempt. Read it back
+// over the portal via GET /api/diag once the AP returns. Called only at quiescent points (radio idle
+// or just powered off) so the append never coincides with Wi-Fi TX — the documented brownout hazard.
+static void syncLog(const char *fmt, ...) {
+  if (!g_sdReady) return;
+  if (SD.exists(DSYNC_SYNCLOG)) {                 // simple rotate: wipe once it grows past the cap
+    File chk = SD.open(DSYNC_SYNCLOG, FILE_READ);
+    bool over = chk && chk.size() > DSYNC_SYNCLOG_CAP;
+    if (chk) chk.close();
+    if (over) SD.remove(DSYNC_SYNCLOG);
+  }
+  File f = SD.open(DSYNC_SYNCLOG, FILE_APPEND);
+  if (!f) return;
+  char msg[96];
+  va_list ap; va_start(ap, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, ap);
+  va_end(ap);
+  f.printf("%lu,%lu,%s\n", (unsigned long)nowUnix(), (unsigned long)millis(), msg);
+  f.close();
+}
+
+// Head-of-line guard (v0.10.9). nextUnsynced() hands back the OLDEST unsynced file, so a single
+// file that fails every pass stalls every newer dive behind it indefinitely — dive0003 did exactly
+// that. After DSYNC_MAX_FILE_FAILS consecutive failures the file is deferred for this power cycle
+// so the queue drains; a reboot clears the list and it is retried from scratch.
+static char    s_defer[4][20];
+static uint8_t s_deferN = 0;
+static char    s_failFile[20] = "";
+static uint8_t s_failCnt = 0;
+static bool isDeferred(const char *f) {
+  for (uint8_t i = 0; i < s_deferN; i++) if (!strcmp(s_defer[i], f)) return true;
+  return false;
+}
+static void noteFailure() {
+  if (!s_fname[0]) return;
+  if (strcmp(s_failFile, s_fname)) { strncpy(s_failFile, s_fname, sizeof(s_failFile) - 1);
+                                     s_failFile[sizeof(s_failFile) - 1] = 0; s_failCnt = 1; }
+  else s_failCnt++;
+  if (s_failCnt >= DSYNC_MAX_FILE_FAILS && s_deferN < 4 && !isDeferred(s_fname)) {
+    strncpy(s_defer[s_deferN], s_fname, 19); s_defer[s_deferN][19] = 0; s_deferN++;
+    syncLog("deferring %s after %u fails - moving on to newer dives", s_fname, (unsigned)s_failCnt);
+    s_failCnt = 0;
+  }
+}
+
 static bool nextUnsynced(char *out, size_t n) {
   File root = SD.open("/");
   if (!root) return false;
@@ -125,7 +176,7 @@ static bool nextUnsynced(char *out, size_t n) {
       const char *b = strrchr(f.name(), '/'); b = b ? b + 1 : f.name();
       size_t L = strlen(b);
       if (L > 8 && !strncmp(b, "dive", 4) && !strcmp(b + L - 4, ".csv") && f.size() > 0
-          && !manifestHas(b)) {
+          && !manifestHas(b) && !isDeferred(b)) {
         strncpy(out, b, n - 1); out[n - 1] = 0; found = true;
       }
     }
@@ -219,12 +270,16 @@ static void radioOff() {
   WiFi.mode(WIFI_OFF);
 }
 
-static void dsFail(const char *why) {           // recoverable: back off and retry later
+static void dsFail(const char *fmt, ...) {      // recoverable: back off and retry later (printf-style)
+  char why[80];
+  va_list ap; va_start(ap, fmt); vsnprintf(why, sizeof(why), fmt, ap); va_end(ap);
   Serial.printf("DiveSync: FAIL (%s)\n", why);
   radioOff();
   s_backoff = s_backoff ? min(s_backoff * 2, DSYNC_BACKOFF_MAX_MS) : DSYNC_FAIL_BACKOFF_MS;
   s_next = millis() + s_backoff;
   setStatus("failed: %s (retry in %lu min)", why, (unsigned long)(s_backoff / 60000UL));
+  syncLog("FAILED: %s (%s, retry in %lu min)", why, s_fname, (unsigned long)(s_backoff / 60000UL));
+  noteFailure();                                 // defer a file that keeps failing (head-of-line guard)
   s_ph = DS_IDLE;
 }
 
@@ -252,6 +307,26 @@ static bool dsAllowed() {
          !portalActive() && g_sdReady && dsync.mode == SYNC_CLOUD && dsync.ssid[0];
 }
 
+// Diagnostic probe for /api/wifitest (v0.10.8). Assumes the STA is ALREADY joined; walks the rest
+// of the upload path — DNS, then TLS to the configured cloud host — and reports which stage broke.
+// Lets the whole chain be proven from the portal instead of burning a dive cycle per attempt.
+void diveSyncProbe(char *out, size_t n) {
+  char host[64]; urlHost(host, sizeof(host));
+  IPAddress hip;
+  if (!WiFi.hostByName(host, hip)) { snprintf(out, n, "DNS FAILED for %s", host); return; }
+  WiFiClientSecure tls;
+  tls.setInsecure();
+  uint32_t t0 = millis();
+  if (!tls.connect(host, 443, DSYNC_TLS_MS)) {
+    snprintf(out, n, "TLS FAILED (dns ok %s, rssi %d, heap %u)", hip.toString().c_str(),
+             (int)WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
+    tls.stop(); return;
+  }
+  snprintf(out, n, "DNS+TLS OK (%s, %lu ms, rssi %d)", hip.toString().c_str(),
+           (unsigned long)(millis() - t0), (int)WiFi.RSSI());
+  tls.stop();
+}
+
 // ---------------- per-file upload: open file + TLS connect + request head (bounded blocking) ----------------
 static bool startFile() {
   char path[24]; snprintf(path, sizeof(path), "/%s", s_fname);
@@ -262,9 +337,18 @@ static bool startFile() {
 
   char host[64]; urlHost(host, sizeof(host));
   char mac[13]; macHex(mac);
+  WiFi.setTxPower(DSYNC_TX_PUMP);
   s_tls.stop();
   s_tls.setInsecure();                           // MVP (documented); hardening = pin the Supabase root CA
-  if (!s_tls.connect(host, 443, 10000)) { dsFail("tls connect"); return false; }
+  // Split DNS from the handshake: "tls connect" alone couldn't tell a name-resolution failure from
+  // a dead link, and both look identical on the run screen. Carry RSSI/heap for the marginal cases.
+  IPAddress hip;
+  if (!WiFi.hostByName(host, hip)) { dsFail("dns failed for %s (rssi %d)", host, (int)WiFi.RSSI()); return false; }
+  if (!s_tls.connect(host, 443, DSYNC_TLS_MS)) {
+    dsFail("tls connect failed (dns ok %s, rssi %d, heap %u)", hip.toString().c_str(),
+           (int)WiFi.RSSI(), (unsigned)ESP.getFreeHeap());
+    return false;
+  }
 
   // The WHOLE file streams to the cloud including the '#' block — the cloud CSV must be
   // byte-identical to the SD file — so rewind after the header parse before sizing/sending.
@@ -307,6 +391,21 @@ static void metaPost() {                         // storage leg done -> post the
   s_ph = DS_META_RESP;
 }
 
+// First ~90 chars of the response BODY, flattened for the one-line CSV trace (commas/newlines out).
+static void respBody(char *out, size_t n) {
+  const char *b = strstr(s_resp, "\r\n\r\n");
+  b = b ? b + 4 : s_resp;
+  size_t i = 0;
+  while (*b && i < n - 1) { char c = *b++; if (c == '\r' || c == '\n' || c == ',') c = ' '; out[i++] = c; }
+  out[i] = 0;
+}
+// "already uploaded on an earlier pass". Storage answers a duplicate with HTTP *400* and the real
+// 409 only inside the body ({"statusCode":"409","error":"Duplicate"}), so the status line alone
+// can't be trusted — match the body marker too.
+static bool respIsDuplicate() {
+  return strstr(s_resp, "Duplicate") || strstr(s_resp, "already exists");
+}
+
 static int respCode() {                          // "HTTP/1.1 201 ..." -> 201 (0 = unparsable)
   s_resp[s_respLen] = 0;
   if (s_respLen < 12 || strncmp(s_resp, "HTTP/", 5)) return 0;
@@ -319,10 +418,12 @@ static void fileDone(const char *status) {
   s_tls.stop();
   s_done++;
   Serial.printf("DiveSync: %s -> %s\n", s_fname, status);
+  syncLog("%s -> %s", s_fname, status);
   if (!strcmp(status, "REJECTED")) setStatus("%s REJECTED - MAC not on allowlist", s_fname);
   // more files? stay on this Wi-Fi and start the next one; else wrap up
   if (dsAllowed() && nextUnsynced(s_fname, sizeof(s_fname))) { startFile(); return; }
   Serial.printf("DiveSync: pass complete, %u file(s) handled\n", s_done);
+  syncLog("pass complete, %u file(s) handled", s_done);
   if (strcmp(status, "REJECTED")) setStatus("synced %u file(s)", s_done);
   s_backoff = 0;
   dsQuiet(DSYNC_CHECK_MS);
@@ -346,6 +447,7 @@ void diveSyncLoop() {
       s_ph = DS_SCAN;
       Serial.printf("DiveSync: %s pending, scanning for '%s'\n", s_fname, dsync.ssid);
       setStatus("scanning for '%s'", dsync.ssid);
+      syncLog("attempt: %s pending, scanning for '%s'", s_fname, dsync.ssid);
       break;
     }
 
@@ -366,23 +468,32 @@ void diveSyncLoop() {
         setStatus("'%s' not seen (%d nearby)", dsync.ssid, n);
         WiFi.scanDelete();
         dsQuiet(60000UL);                                      // out of range: quiet retry, no backoff
+        syncLog("'%s' NOT seen in scan (%d networks nearby)", dsync.ssid, n);
         return;
       }
       WiFi.scanDelete();
       Serial.printf("DiveSync: '%s' found, joining\n", dsync.ssid);
       setStatus("joining '%s'", dsync.ssid);
+      WiFi.setTxPower(DSYNC_TX_JOIN);                          // full power BEFORE begin: associate through the housing
       WiFi.begin(dsync.ssid, dsync.pass);
-      WiFi.setTxPower(WIFI_POWER_8_5dBm);                      // same brownout guard as the AP side
       s_deadline = millis() + DSYNC_CONNECT_MS;
       s_ph = DS_JOIN;
       break;
     }
 
-    case DS_JOIN:
-      if (WiFi.status() == WL_CONNECTED) { startFile(); return; }
-      if (WiFi.status() == WL_CONNECT_FAILED || (int32_t)(millis() - s_deadline) > 0)
-        dsFail("join failed - check password");
+    case DS_JOIN: {
+      wl_status_t st = WiFi.status();
+      if (st == WL_CONNECTED) {
+        syncLog("joined '%s' (rssi %d dBm, ip %s)", dsync.ssid, (int)WiFi.RSSI(),
+                WiFi.localIP().toString().c_str());
+        startFile(); return;
+      }
+      // Distinguish a real credential/security reject from a plain no-association timeout — the old
+      // code blamed the password for both. Raw wl_status: 1=no-SSID 4=CONNECT_FAILED 6=DISCONNECTED.
+      if (st == WL_CONNECT_FAILED)              dsFail("auth rejected by '%s' (check password/security)", dsync.ssid);
+      else if ((int32_t)(millis() - s_deadline) > 0) dsFail("join timeout, no association (wl_status %d)", (int)st);
       return;
+    }
 
     case DS_PUMP: {
       if (!s_tls.connected()) { dsFail("conn dropped"); return; }
@@ -405,10 +516,12 @@ void diveSyncLoop() {
       bool over = !s_tls.connected() && !s_tls.available();
       if (!over && (int32_t)(millis() - s_deadline) < 0) return;
       int code = respCode();
-      if (code == 200 || code == 201 || strstr(s_resp, "Duplicate") || code == 409) {
+      if (code == 200 || code == 201 || code == 409 || respIsDuplicate()) {
         metaPost();                                            // dup = file already up; still post the row
       } else {
-        dsFail(code ? "storage http error" : "storage no response");
+        char b[96]; respBody(b, sizeof(b));
+        syncLog("storage HTTP %d: %s", code, b);
+        dsFail(code ? "storage http %d" : "storage no response", code);
       }
       return;
     }
@@ -418,9 +531,15 @@ void diveSyncLoop() {
       bool over = !s_tls.connected() && !s_tls.available();
       if (!over && (int32_t)(millis() - s_deadline) < 0) return;
       int code = respCode();
-      if (code == 201 || (code == 409 && strstr(s_resp, "23505"))) fileDone("OK");
-      else if (code == 409 && strstr(s_resp, "23503"))            fileDone("REJECTED");  // not allowlisted
-      else dsFail(code ? "meta http error" : "meta no response");
+      // Match the PostgREST error codes in the BODY regardless of the status line (same
+      // header-overrun lesson as storage): 23505 = row already there, 23503 = MAC not allowlisted.
+      if (code == 200 || code == 201 || strstr(s_resp, "23505") || strstr(s_resp, "duplicate key")) fileDone("OK");
+      else if (strstr(s_resp, "23503"))                                                             fileDone("REJECTED");
+      else {
+        char b[96]; respBody(b, sizeof(b));
+        syncLog("meta HTTP %d: %s", code, b);
+        dsFail(code ? "meta http %d" : "meta no response", code);
+      }
       return;
     }
   }

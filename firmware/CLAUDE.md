@@ -59,15 +59,30 @@ roadmap note). Pin defines live in `shared.h` (`PIN_*`). I²C address defines: `
   POST + PostgREST metadata row parsed from the file's own `#` header; manifest `/sync.csv`).
   Hard-gated on `!g_logging && !g_submerged && !portalActive()`; button press cancels. The cloud
   contract lives in docs/DiveSync-To-Do.md Phase 4 (REVISED: plain POST, 409 = already synced).
+  **Observability (v0.10.5):** because the portal (which serves the live `ds_stat`) is DOWN for the
+  whole attempt and a sealed unit has no serial/SD access, each attempt's start + outcome is also
+  appended to a persistent `/synclog.csv` (`syncLog()`, self-rotating at `DSYNC_SYNCLOG_CAP`),
+  painted on the run screen (`syncStatusOverlay()` in main.cpp), and dumped by `GET /api/diag`
+  alongside `/sync.csv`. `syncLog()` is called only at radio-quiescent points (brownout rule).
+  **STA TX power (v0.10.6):** join uses full power (`DSYNC_TX_JOIN`), upload a mid level
+  (`DSYNC_TX_PUMP`) — the old flat 8.5 dBm AP guard was too weak to associate through the sealed
+  housing (RX saw the AP, TX couldn't reply → 15 s timeouts). Join failures now distinguish an
+  auth reject from a no-association timeout and log the raw `wl_status` (+ joined IP on success).
 - **`shared.h`** — all cross-file prototypes, includes, `#define`s, globals.
-  `FW_VERSION` is defined **canonically here** (currently `0.10.4` — full history in
+  `FW_VERSION` is defined **canonically here** (currently `0.10.6` — full history in
   `CHANGELOG.md`; recent: `0.9.4` fixed the splash decoder + swapped tap/hold (tap = page flip,
   hold = POI), `0.10.0` added DiveSync cloud offload, `0.10.1` added the BAR30-depth submerge
   fallback so BAR30+Celsius-only variants start dives, `0.10.2` added the 3 s-hold manual
   logging override, `0.10.3` fixed the no-POET sampler deadlock — the sample cycle was gated on
   a POET I2C ACK, so POET-less builds never sampled — and made displayed temp POET → Celsius →
   BAR30, `0.10.4` made DiveSync field-debuggable: live sync-status line in the Data offload
-  card, scan-outcome serial logging, and a `/api/wifiscan` pick-a-network button).
+  card, scan-outcome serial logging, and a `/api/wifiscan` pick-a-network button, `0.10.5` made
+  it debuggable on a SEALED unit: persistent `/synclog.csv`, on-screen last-sync status, and
+  `GET /api/diag`, `0.10.6` fixed the STA join that timed out through the housing (full-power
+  association `DSYNC_TX_JOIN` / mid-power upload `DSYNC_TX_PUMP`, was a flat too-weak 8.5 dBm)
+  and split the timeout-vs-auth-reject failure message, `0.10.7` reworked the Data offload card —
+  scan-on-open network dropdown that IS the SSID, one-tap `/api/wifitest` credential check
+  (`ds_test`), None/Local/Cloud type, and an Expert-mode gate over URL/key/Firmware/Splash/Cal).
 - **`calibration.cpp`** — on-device cal flows (pH 3-pt, EC 1-pt, ORP 1-pt, Cyclops 2-pt)
   and salinity/PSU math. Entered via boot button-hold or the portal.
 - **`setup_portal.cpp`** — SoftAP captive portal: `WebServer(80)`, `DNSServer`,
@@ -80,7 +95,9 @@ line-by-line draw callback — no full framebuffer, fits the C6).
 
 SD files: `state.json` (settings/mission/time/thresholds), `cal.json` (calibration),
 `dive*.csv` (logs), `callog.csv` (calibration audit log), `splash.gif` (boot animation,
-optional — absent → built-in static logo).
+optional — absent → built-in static logo), `sync.csv` (DiveSync manifest: which dives are
+done/REJECTED), `synclog.csv` (DiveSync attempt trace, v0.10.5 — persists across reboot; **not**
+wiped by "Clear logs", unlike `sync.csv`).
 
 ## Hard rules — do not break these
 

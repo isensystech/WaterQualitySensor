@@ -474,8 +474,27 @@ static void waterPage() {
   footer();
 }
 
+// v0.10.5: last DiveSync outcome painted just above the footer, so a SEALED unit can be debugged
+// through the tube -- no serial, no SD pull, and the portal that serves ds_stat is down for the
+// whole sync attempt. The status text persists after a failure (it only changes at the next phase
+// transition), so "join failed - check password" stays on screen until the next retry. Skipped
+// while idle/unconfigured (nothing to say). Redrawn every sample; truncated to one 240px line.
+static void syncStatusOverlay() {
+  const char *s = diveSyncStatusText();
+  if (!s || !*s || !strcmp(s, "idle")) return;
+  uint16_t col = ST77XX_WHITE;
+  if (diveSyncBusy())                                              col = ST77XX_CYAN;
+  else if (!strncmp(s, "synced", 6))                              col = ST77XX_GREEN;
+  else if (!strncmp(s, "failed", 6) || strstr(s, "not seen") ||
+           strstr(s, "REJECTED"))                                 col = ST77XX_RED;
+  char line[44]; snprintf(line, sizeof(line), "%s", s);           // truncate to one line (~39 chars)
+  tft.fillRect(0, SCR_H - 20, SCR_W, 9, ST77XX_BLACK);
+  tft.setTextSize(1); tft.setTextColor(col); tft.setCursor(2, SCR_H - 19); tft.print(line);
+}
+
 void renderRun() {
   if (g_page == 0) divePage(); else waterPage();
+  syncStatusOverlay();
   if (millis() < g_poiBannerUntil) {                       // centred banner overlay
     bool poi = (g_bannerKind == 0);
     tft.fillRoundRect(20, 132, 200, 56, 8, poi ? ST77XX_BLUE : COL_BORDER);

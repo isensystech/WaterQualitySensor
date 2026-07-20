@@ -4,6 +4,92 @@ All notable changes to the Dive WaterQuality Logger firmware are documented here
 Versions track `FW_VERSION` in [`src/shared.h`](src/shared.h) — the single source of truth.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.10.9] — 2026-07-20
+
+### Fixed
+- **A dive whose file uploaded but whose metadata row didn't could never recover** — it retried
+  forever *and head-of-line blocked every newer dive behind it* (field: dive0003 wedged the queue
+  through 4 backoff cycles while dive0004–0007 waited). Two real bugs:
+  - **Response buffer was smaller than the response headers.** `s_resp` was 600 B; Supabase behind
+    Cloudflare returns ~790 B of headers (a ~300 B `set-cookie` alone) before the JSON body. The
+    buffer filled with headers, so the body markers the logic keys on were never in RAM. Buffer is
+    now 1600 B.
+  - **Duplicate detection keyed off the status line.** Storage answers an already-uploaded object
+    with **HTTP 400**, carrying the real `"statusCode":"409","error":"Duplicate"` *in the body*.
+    Storage and metadata responses are now matched on body markers (`Duplicate`/`already exists`,
+    PostgREST `23505`/`23503`) independent of the status line, so a re-POST of an existing object
+    correctly proceeds to writing the missing metadata row.
+- Storage/metadata failures now record the **actual HTTP code and body snippet** to `/synclog.csv`
+  instead of a blank "storage http error".
+- **Head-of-line guard:** a file that fails `DSYNC_MAX_FILE_FAILS` (3) times in a row is deferred
+  for the rest of the power cycle so the queue keeps draining; a reboot clears the list.
+
+## [0.10.8] — 2026-07-20
+
+### Fixed
+- **TLS handshake failed right after a good join.** `startFile()` dropped TX power to 13 dBm
+  immediately before the handshake, on a link that had just associated at full power — too weak
+  through the sealed housing (intermittent "failed: tls connect"). The whole sync now stays at
+  full TX; lower `DSYNC_TX_PUMP` only if a brownout ever appears.
+- **DNS is split from the handshake** in failure text, with RSSI and free heap, so a name-resolution
+  failure, a dead link and a memory problem are no longer one indistinguishable "tls connect".
+- **`/api/wifitest` now probes DNS + TLS to the cloud** after associating, so the entire upload path
+  is verifiable from the portal without burning a dive cycle per attempt.
+
+## [0.10.7] — 2026-07-17
+
+### Changed
+- **Data offload card reworked** after a field UX trap: the old card had a "Scan" dropdown *above*
+  a separate SSID text box, and picking from the dropdown silently did nothing unless you also
+  retyped the name below — so a saved config could end up with a password but a blank SSID, which
+  keeps the sync gate shut with no obvious cause. Now the **network dropdown IS the SSID**: it
+  auto-scans when the Settings tab opens (reads "Please wait…" while scanning), picking a network
+  sets it directly, and an "Enter manually…" row covers a network that isn't currently broadcasting.
+- **"Test this Wi-Fi now" button** (`GET /api/wifitest`, result in `/api/state` `ds_test`): the
+  logger AP_STA-joins the chosen network and reports **OK (joined, with IP)**, **password/security
+  rejected**, or **timeout** — so credentials are verified on the spot instead of only failing
+  silently after a dive. Saving changed credentials also kicks the test in the background. (Single
+  radio: the ~12 s test can briefly drop the phone from the portal; the result is stored and the
+  page reads it back on reconnect.)
+- **Expert-mode toggle** at the top of Settings hides advanced controls by default — Cloud
+  URL/API key, Firmware update, Splash/branding, and Enter-calibration are shown only when it's on.
+- **Offload type** is now None / Local / Cloud; **Local** is selectable (persists) but inert until
+  the base station ships (`dsAllowed()` still gates on Cloud only).
+
+## [0.10.6] — 2026-07-17
+
+### Fixed
+- **DiveSync could never join Wi-Fi from inside the sealed housing.** The STA join reused the AP's
+  `WIFI_POWER_8_5dBm` brownout guard, set the instant `WiFi.begin()` was called. The unit could
+  *receive* the router (saw the SSID in the scan at -70 dBm) but its 8.5 dBm reply couldn't get
+  back out through the tube, so every join ran the full 15 s `DSYNC_CONNECT_MS` and timed out —
+  while bare ESP32s on the same network joined fine (confirming the network, not the credentials).
+  Association now uses full power (`DSYNC_TX_JOIN` = 19.5 dBm); the sustained upload eases back to
+  a mid level (`DSYNC_TX_PUMP` = 13 dBm) that still clears the housing but keeps brownout margin.
+- **"join failed - check password" was a mislabel** — it fired on a plain association timeout as
+  well as a real credential reject, sending us chasing a correct password. The two are now split:
+  `auth rejected …` only on `WL_CONNECT_FAILED`, else `join timeout, no association (wl_status N)`
+  with the raw status code. On success the joined **IP and RSSI are logged** to `/synclog.csv`.
+
+## [0.10.5] — 2026-07-17
+
+### Added
+- **DiveSync is now debuggable on a *sealed* unit.** The v0.10.4 status line lives in RAM and is
+  served by the portal — but the portal is torn down for the entire sync attempt, and a tube unit
+  has no serial and no reachable SD, so a field sync that fails leaves no trace you can read. Three
+  durable records now close that gap:
+  - **Persistent `/synclog.csv`** (append-only `epoch,ms,event`, survives reboot, self-rotates at
+    16 KB): one line when an attempt starts (`scanning for 'X'`), and one at each outcome —
+    `'X' NOT seen`, `FAILED: join failed …`, `dive0003.csv -> OK/REJECTED`, `pass complete`.
+    Written only at quiescent points (radio off or idle) to respect the Wi-Fi+SD brownout rule.
+  - **On-screen last-sync status** painted just above the footer on the run screen, colour-coded
+    (cyan busy / red failed / green synced). It persists after a failure — e.g. `failed: join
+    failed - check password` stays visible through the tube until the next retry.
+  - **`GET /api/diag`** dumps `sync.csv` + `synclog.csv` as plain text, so the whole history is
+    readable over the portal the moment the AP returns after a sync attempt.
+- Rationale: first live field sync uploaded nothing and there was no way to see why on the actual
+  hardware. This makes the unit self-reporting instead of needing a bench + USB to diagnose.
+
 ## [0.10.4] — 2026-07-16
 
 ### Added

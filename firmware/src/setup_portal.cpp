@@ -138,6 +138,11 @@ static void handleSync() {
   server.send(400, "text/plain", "bad");
 }
 
+// Last credential-test outcome, surfaced in /api/state as ds_test. RAM-only: it exists so the
+// portal can show the result after the phone reconnects (handleWifiTest briefly steals the single
+// radio to associate, which can drop the phone off the AP — same reason the sync status is echoed).
+static char s_wifiTest[176] = "";
+
 // GET current settings so the form can prefill (NAN bounds serialize away -> blank inputs)
 static void handleState() {
   JsonDocument d;
@@ -168,6 +173,7 @@ static void handleState() {
   root["ds_url"]  = dsync.url;
   root["ds_key"]  = dsync.key;
   root["ds_stat"] = diveSyncStatusText();   // live "why isn't it syncing" line for the card
+  root["ds_test"] = s_wifiTest;             // last credential-test result (read back after a reconnect)
   char gps[40] = "";
   if (deploy.hasPos) snprintf(gps, sizeof(gps), "%.5f,%.5f", deploy.lat, deploy.lon);
   root["gps"]     = gps;
@@ -220,7 +226,7 @@ static void handleDeploy() {
   deploy.dimMinutes = (uint16_t)dm;
   // DiveSync (Data offload card). URL/key fall back to the baked defaults when blanked.
   int dsm = d["ds_mode"] | (int)dsync.mode;
-  dsync.mode = (dsm == SYNC_CLOUD) ? SYNC_CLOUD : SYNC_NONE;
+  dsync.mode = (dsm == SYNC_CLOUD) ? SYNC_CLOUD : (dsm == SYNC_LOCAL) ? SYNC_LOCAL : SYNC_NONE;
   if (d["ds_ssid"].is<const char *>()) cpy(dsync.ssid, sizeof(dsync.ssid), d["ds_ssid"]);
   if (d["ds_pass"].is<const char *>()) cpy(dsync.pass, sizeof(dsync.pass), d["ds_pass"]);
   const char *dsu = d["ds_url"] | "";
@@ -258,6 +264,44 @@ static void handleCal() {
 // user picks the exact string (kills typos/curly-quote mismatches) and instantly learns whether a
 // 5 GHz-only or dormant hotspot is invisible to the logger. AP_STA keeps the portal alive during
 // the scan; the ~2 s blocking scan is a user-initiated surface action (same rule-5 exception as OTA).
+// One-tap credential check (v0.10.7). Bounded, user-initiated, surface, never-while-logging — the
+// same rule-5 blocking carve-out as OTA/scan. AP_STA keeps the portal nominally up, but a single
+// radio must follow the router's channel to associate, so the phone may drop for the ~12 s test and
+// reconnect after; the result is stored so the page can read it back either way.
+static void handleWifiTest() {
+  if (g_logging) { server.send(409, "application/json", "{\"ok\":false,\"msg\":\"busy logging\"}"); return; }
+  String ssid = server.arg("ssid"), pass = server.arg("pass");
+  if (!ssid.length()) { server.send(400, "application/json", "{\"ok\":false,\"msg\":\"no network selected\"}"); return; }
+  snprintf(s_wifiTest, sizeof(s_wifiTest), "testing...");
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setTxPower(DSYNC_TX_JOIN);                       // full power to associate through the housing
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  uint32_t t0 = millis(); wl_status_t st = WL_IDLE_STATUS;
+  while (millis() - t0 < 12000) {
+    st = WiFi.status();
+    if (st == WL_CONNECTED || st == WL_CONNECT_FAILED) break;
+    delay(120);
+  }
+  bool ok = (st == WL_CONNECTED);
+  char ip[20] = "";
+  if (ok) { strncpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip) - 1);
+            // Joined — now walk the rest of the upload path (DNS + TLS to the cloud) so a failure
+            // downstream of association is visible here instead of only after a dive.
+            char probe[112] = ""; diveSyncProbe(probe, sizeof(probe));
+            ok = (strstr(probe, "FAILED") == NULL);   // joined but cloud unreachable is still a failure
+            snprintf(s_wifiTest, sizeof(s_wifiTest), "%s - joined %s (%s); %s",
+                     ok ? "OK" : "FAILED", ssid.c_str(), ip, probe); }
+  else if (st == WL_CONNECT_FAILED) snprintf(s_wifiTest, sizeof(s_wifiTest), "FAILED - password/security rejected");
+  else                              snprintf(s_wifiTest, sizeof(s_wifiTest), "FAILED - no connection (timeout, status %d)", (int)st);
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_AP);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);                   // restore the AP brownout guard
+  Serial.printf("WiFi test '%s': %s\n", ssid.c_str(), s_wifiTest);
+  char body[256];
+  snprintf(body, sizeof(body), "{\"ok\":%s,\"status\":%d,\"msg\":\"%s\"}", ok ? "true" : "false", (int)st, s_wifiTest);
+  server.send(200, "application/json", body);
+}
+
 static void handleWifiScan() {
   WiFi.mode(WIFI_AP_STA);
   int n = WiFi.scanNetworks(false /*blocking*/);
@@ -333,6 +377,28 @@ static void handleLogAll() {                             // every dive concatena
     f.close();
   }
   root.close();
+  server.sendContent("");   // terminate the chunked response
+}
+
+// v0.10.5: dump the two DiveSync bookkeeping files as plain text so a sealed unit's sync history
+// is readable over the portal once the AP returns — the sync attempt itself runs with the portal
+// DOWN, so this is the after-the-fact record. /sync.csv = which files are done/REJECTED;
+// /synclog.csv = the timestamped attempt trace (why a sync failed: not seen / join / tls / ...).
+static void streamFileOr(const char *path, const char *emptyMsg) {
+  File f = SD.open(path, FILE_READ);
+  if (!f) { server.sendContent(emptyMsg); server.sendContent("\n"); return; }
+  uint8_t buf[256]; int n;
+  while ((n = f.read(buf, sizeof(buf))) > 0) server.sendContent((const char *)buf, n);
+  f.close();
+}
+static void handleDiag() {
+  if (!sdEnsure()) { server.send(503, "text/plain", "no sd"); return; }
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/plain", "");
+  server.sendContent("# ==== sync.csv (filename,epoch,status) ====\n");
+  streamFileOr(DSYNC_MANIFEST, "(no sync.csv yet — nothing has ever finished uploading)");
+  server.sendContent("\n# ==== synclog.csv (epoch,ms,event) ====\n");
+  streamFileOr(DSYNC_SYNCLOG, "(no synclog.csv yet — no sync attempt has run since a card clear)");
   server.sendContent("");   // terminate the chunked response
 }
 
@@ -592,6 +658,7 @@ void portalBegin() {
   server.on("/api/state",  HTTP_GET,  handleState);
   server.on("/api/scan",   HTTP_GET,  handleScan);
   server.on("/api/wifiscan", HTTP_GET, handleWifiScan);   // Data offload: pick-a-network list
+  server.on("/api/wifitest", HTTP_GET, handleWifiTest);   // Data offload: test-join the selected network
   server.on("/api/deploy", HTTP_POST, handleDeploy);
   server.on("/api/thresh", HTTP_POST, handleThresh);
   server.on("/api/cal",    HTTP_POST, handleCal);
@@ -599,6 +666,7 @@ void portalBegin() {
   server.on("/api/log",    HTTP_GET,  handleLog);
   server.on("/api/logall", HTTP_GET,  handleLogAll);
   server.on("/api/logclear", HTTP_POST, handleLogClear);
+  server.on("/api/diag",   HTTP_GET,  handleDiag);        // dump sync.csv + synclog.csv (sealed-unit debug)
   server.on("/api/ota",    HTTP_POST, handleOtaDone, handleOtaUpload);   // firmware update (file-mule OTA)
   server.on("/api/splash", HTTP_POST, handleSplashDone, handleSplashUpload); // boot-splash GIF -> SD (apply=reboot)
   server.on("/generate_204", handle204);                 // Android / ChromeOS

@@ -97,7 +97,31 @@
 //       (/api/state ds_stat), and a "Scan for networks" picker (/api/wifiscan, AP_STA) lists the
 //       2.4 GHz networks the C6 actually sees — typos and 5 GHz-only/dormant hotspots surface
 //       immediately instead of failing silently.
-#define FW_VERSION         "0.10.4"
+// 0.10.5 makes DiveSync debuggable on a SEALED unit (no serial, no SD pull, and the portal — which
+//       serves ds_stat — is down during every sync attempt): each attempt's outcome is appended to
+//       a persistent /synclog.csv (survives reboot), the last sync status is painted on the run
+//       screen (readable through the tube), and GET /api/diag dumps sync.csv + synclog.csv.
+// 0.10.6 fixes the STA join that timed out from inside the housing: association now uses full TX
+//       power (DSYNC_TX_JOIN) and the upload a mid level (DSYNC_TX_PUMP), instead of the flat 8.5 dBm
+//       AP brownout guard that was too weak to transmit back through the tube. The failure message
+//       no longer mislabels a timeout as "check password" — it distinguishes an auth reject from a
+//       no-association timeout and records the raw wl_status code (+ the joined IP on success).
+// 0.10.7 reworks the Data offload card: a scan-on-open network dropdown that IS the SSID (the old
+//       separate box that silently ignored the picker was a UX trap), a one-tap "Test this Wi-Fi"
+//       that AP_STA-joins the router and reports OK / password-reject / timeout (/api/wifitest,
+//       ds_test), a None/Local/Cloud type select, and an Expert-mode toggle that hides Cloud
+//       URL/key, Firmware, Splash and Enter-calibration behind an advanced-settings gate.
+// 0.10.8 gets the upload past the join: the sustained leg now stays at FULL TX (the 13 dBm step-down
+//       in startFile broke the TLS handshake on a link that had just associated fine), DNS is split
+//       out from the handshake in the failure text (with RSSI/heap), and /api/wifitest now probes
+//       DNS+TLS to the cloud after joining — the whole path is testable from the portal, no dive.
+// 0.10.9 unwedges a file whose storage upload succeeded but whose metadata POST failed: the response
+//       buffer (600 B) was smaller than Supabase's ~790 B of Cloudflare headers, so the body markers
+//       ("Duplicate", PostgREST 23505/23503) were never in RAM to match and the retry loop failed
+//       forever. Buffer -> 1600 B, matching keys off the BODY not the status line (a duplicate comes
+//       back as HTTP 400 carrying statusCode 409), failures now log the real code + body, and a file
+//       that fails DSYNC_MAX_FILE_FAILS times is deferred so it can't head-of-line block newer dives.
+#define FW_VERSION         "0.10.9"
 
 // display orientation: 0/2 = portrait (240x320), 1/3 = landscape (320x240).
 // Unit is held vertically -> portrait.  Flip 2<->0 if the image is upside-down.
@@ -135,12 +159,30 @@ struct Threshold { float warnLo, warnHi, alarmLo, alarmHi; };
 #define DSYNC_SCAN_MS         12000UL     // async Wi-Fi scan deadline
 #define DSYNC_CONNECT_MS      15000UL     // STA join deadline
 #define DSYNC_HTTP_MS         20000UL     // per-request response deadline
+#define DSYNC_TLS_MS          15000UL     // TLS connect deadline (was a bare 10 s literal)
+#define DSYNC_MAX_FILE_FAILS  3           // consecutive fails before a file is deferred (head-of-line guard)
 #define DSYNC_CHUNK           1024        // SD -> TLS bytes per loop pass (keeps sampling alive)
+// STA TX power (v0.10.6). The old flat 8.5 dBm (AP brownout guard) was too weak for the STA to
+// ASSOCIATE from inside the sealed housing — it saw the AP (RX) but its reply never made it back
+// (TX), so joins timed out at DSYNC_CONNECT_MS while bare ESP32s on the same network joined fine.
+// Join uses full power (brief, RX-heavy, no concurrent SD); the sustained upload backs off to a
+// mid level that still clears the housing but keeps margin against the WiFi+SD brownout.
+#define DSYNC_TX_JOIN         WIFI_POWER_19_5dBm  // association: max, punch through the tube
+// v0.10.8: the upload stays at FULL power too. Backing off to 13 dBm right before the TLS
+// handshake killed it ("failed: tls connect") on a link that had just associated fine at max —
+// the housing eats too much to run the sustained leg quieter. Sync is brief and surface-only;
+// if this ever browns out (WiFi+SD), lower it here rather than reintroducing a mid-sync step-down.
+#define DSYNC_TX_PUMP         WIFI_POWER_19_5dBm
 #define DSYNC_FAIL_BACKOFF_MS 120000UL    // first retry delay after a failure (doubles each fail)
 #define DSYNC_BACKOFF_MAX_MS  1800000UL   // backoff cap (30 min)
 #define DSYNC_MANIFEST        "/sync.csv" // append-only: filename,epoch,status
+#define DSYNC_SYNCLOG         "/synclog.csv" // append-only attempt trace: epoch,ms,event (v0.10.5,
+                                           // survives reboot; the ONLY sync record on a sealed unit
+                                           // whose portal is torn down during every sync attempt)
+#define DSYNC_SYNCLOG_CAP     16384       // rotate (wipe) the trace once it passes this many bytes
 
-enum SyncMode : uint8_t { SYNC_NONE = 0, SYNC_CLOUD = 1 };  // SYNC_LOCAL arrives with the base station
+enum SyncMode : uint8_t { SYNC_NONE = 0, SYNC_CLOUD = 1, SYNC_LOCAL = 2 };  // LOCAL is selectable but
+                                            // inert until the base station ships (dsAllowed gates on CLOUD only)
 
 struct DiveSyncCfg {          // persisted via state.json (ds_* keys); runtime state stays in divesync.cpp
   uint8_t mode;               // SyncMode; default SYNC_NONE = zero behavior change for existing units
@@ -262,6 +304,7 @@ bool diveSyncBusy();              // true while scanning/joining/uploading (foot
 void diveSyncCancel(const char *why);   // button press / portal request aborts a sync in flight
 void diveSyncKick();              // dive just closed: reset backoff so sync tries promptly
 const char *diveSyncStatusText(); // one-line live status for the portal Data offload card
+void diveSyncProbe(char *out, size_t n);  // /api/wifitest: DNS+TLS probe once the STA is joined
 
 // setup portal (WiFi UTC sync + deployment header + thresholds + accent)
 void portalBegin();

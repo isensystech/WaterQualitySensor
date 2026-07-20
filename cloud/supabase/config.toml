@@ -392,6 +392,13 @@ verify_jwt = false
 entrypoint = "./functions/viewer/index.ts"
 static_files = ["./functions/viewer/index.html"]
 
+# parse-dive: blob -> samples exploder. verify_jwt=false; gate with the optional
+# PARSE_DIVE_SECRET env (sent as x-parse-secret). Uses the service-role key internally.
+[functions.parse-dive]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/parse-dive/index.ts"
+
 [analytics]
 enabled = true
 port = 54327

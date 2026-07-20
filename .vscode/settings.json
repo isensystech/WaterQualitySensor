@@ -1,0 +1,16 @@
+{
+    "cmake.sourceDirectory": "/Users/scott/Documents/PlatformIO/Projects/WaterQuality/WaterQualitySensor/firmware",
+    "workbench.colorCustomizations": {
+        "activityBar.activeBackground": "#003400",
+        "activityBar.background": "#003400",
+        "activityBar.foreground": "#e7e7e7",
+        "activityBar.inactiveForeground": "#e7e7e799",
+        "activityBarBadge.background": "#4040ff",
+        "activityBarBadge.foreground": "#e7e7e7",
+        "sideBar.border": "#003400",
+        "activityBarTop.activeBackground": "#003400",
+        "activityBarTop.background": "#003400",
+        "activityBarTop.foreground": "#e7e7e7",
+        "activityBarTop.inactiveForeground": "#e7e7e799"
+    }
+}

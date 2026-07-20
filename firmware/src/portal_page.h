@@ -52,6 +52,8 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 .shead h3{margin:0}
 .det{font-size:12px;font-weight:700;white-space:nowrap}
 .okd{color:#27c93f}.badd{color:#ff3b30}
+.adv{display:none}
+.xmode{display:block;font-size:13px;color:#cfd6e6;background:#161b30;border-radius:10px;padding:10px 12px;margin:10px 0}
 .chdr{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .chdr b{color:var(--accent);font-size:14px;word-break:break-all;flex:1}
 .xbtn{width:auto;margin:0;padding:6px 12px;background:#2a3252;font-size:13px;flex:none}
@@ -99,6 +101,7 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <button class=bk onclick="go('home')">Back</button></div>
 
 <div class=view id=v_settings>
+<label class=xmode><input type=checkbox id=xmode onchange=xmodeUI()> <b>Expert mode</b> &mdash; show advanced settings (cloud endpoint, firmware, splash, calibration)</label>
 
 <div class=c><h3>Display colour</h3>
 <p class=hint>Tap a colour to theme the device screen and this page.</p>
@@ -157,20 +160,25 @@ code,.k{background:#0c1020;border:1px solid #2a3252;border-radius:5px;padding:1p
 <select id=ds_mode onchange=dsModeUI()>
 <option value=0>Nowhere (manual download only)</option>
 <option value=1>Cloud &mdash; via internet Wi-Fi</option>
-<option value=2 disabled>Local base station (coming soon)</option>
+<option value=2>Local base station</option>
 </select>
+<div id=ds_local style="display:none"><p class=hint>Local base-station upload isn't available yet &mdash; it ships with the base station. Until then logs stay on the card for manual download.</p></div>
 <div id=ds_cloud style="display:none">
-<label>Internet Wi-Fi network (hotspot / home Wi-Fi)</label>
-<button class=b2 type=button onclick=dsScan()>Scan &mdash; show networks the logger sees</button>
-<select id=ds_pick style="display:none" onchange="if(this.value)id('ds_ssid').value=this.value"></select>
-<input id=ds_ssid placeholder="network name (SSID)">
+<label>Internet Wi-Fi network <span class=hint>(2.4&nbsp;GHz only)</span></label>
+<select id=ds_pick onchange=dsPick()><option value="">open Settings to scan&hellip;</option></select>
+<button class=b2 type=button onclick=dsAutoScan() style="margin-top:6px">Rescan networks</button>
+<div id=ds_manwrap style="display:none;margin-top:6px"><input id=ds_ssid placeholder="network name (SSID)"></div>
 <label>Wi-Fi password</label><input id=ds_pass type=password autocomplete=off>
+<button class=b2 type=button onclick="dsTest()">Test this Wi-Fi now</button>
+<p class=hint id=ds_testmsg></p>
+<div class=adv>
 <label>Cloud URL (blank = default)</label><input id=ds_url placeholder="https://xxxx.supabase.co">
 <label>API key (blank = default)</label><input id=ds_key placeholder="sb_publishable_...">
+</div>
 <p class=hint><b>Hotspot tips:</b> the logger only sees <b>2.4&nbsp;GHz</b> networks &mdash; on iPhone turn on
 <b>Maximize Compatibility</b>; on Android pick the 2.4&nbsp;GHz band. A phone hotspot with nothing connected
 and its screen off <b>stops broadcasting</b> &mdash; keep the hotspot screen open while the logger syncs.
-If Scan doesn't list your network, the logger can't join it &mdash; fix that first.</p>
+If a network isn't in the list, the logger can't see it &mdash; fix that first.</p>
 </div>
 <p class=hint id=ds_stat></p>
 <p class=hint>When you surface after a dive, the logger looks for this network and uploads any
@@ -181,10 +189,10 @@ Uploaded files stay on the card.</p></div>
 <div class=c><h3>Device</h3>
 <div id=ts class=warn>checking...</div>
 <button class=b2 onclick=sync()>Re-sync time from this phone</button>
-<button class=b2 onclick=cal()>Enter calibration mode (on device)</button>
-<p class=hint>Calibration switches the logger into its on-device wizard and turns Wi-Fi off.</p></div>
+<div class=adv><button class=b2 onclick=cal()>Enter calibration mode (on device)</button>
+<p class=hint>Calibration switches the logger into its on-device wizard and turns Wi-Fi off.</p></div></div>
 
-<div class=c><h3>Firmware update</h3>
+<div class="c adv"><h3>Firmware update</h3>
 <p class=hint>Current firmware: <b id=fwver>&hellip;</b></p>
 <label>Firmware file (.bin)</label>
 <input type=file id=fwfile accept=".bin,application/octet-stream">
@@ -195,7 +203,7 @@ Uploaded files stay on the card.</p></div>
 <div class=hint id=otamsg></div></div>
 <p class=hint>Download the firmware <code>.bin</code> to this phone first (needs internet), then upload it here over the logger's Wi-Fi. The logger checks the file, flashes itself and reboots &mdash; rejoin <code>WaterQuality-Logger</code> after about 10&nbsp;seconds. <b>Don't power the logger off during the update.</b></p></div>
 
-<div class=c><h3>Splash / branding</h3>
+<div class="c adv"><h3>Splash / branding</h3>
 <label>Splash animation (GIF)</label>
 <input type=file id=splashfile accept="image/gif,.gif">
 <button class=b2 onclick=splashUpload()>Upload splash&hellip;</button>
@@ -350,6 +358,13 @@ Uploaded files stay on the card.</p></div>
 <li>View the data at the team's dive viewer web page &mdash; ask for a login.</li>
 <li>If a unit's uploads are rejected, its serial/ID may not be on the cloud allowlist yet &mdash; tell the team.</li>
 </ul>
+<p><b>If a sync isn't working</b>, the logger now tells you why in three places &mdash; handy because its setup Wi-Fi is off while it's trying to reach the internet:</p>
+<ul>
+<li><b>On the logger's screen</b>, a small line above the bottom status row shows the latest sync step &mdash; e.g. <span class=k>scanning for 'Home'</span>, <span class=k>joining 'Home'</span>, <span class=k>'Home' not seen (6 nearby)</span>, <span class=k>join failed - check password</span>, or <span class=k>synced 2 file(s)</span>. A failure message stays up until the next try. Readable right through the housing window.</li>
+<li><b>The Data offload card</b> here shows that same latest status when you're connected.</li>
+<li><b>Full history:</b> open <code>192.168.4.1/api/diag</code> in your browser for the complete list of what synced and every attempt's outcome (survives power-off).</li>
+</ul>
+<p>Most common cause of "never uploads": the network isn't 2.4&nbsp;GHz or the password is wrong &mdash; both show as <span class=k>not seen</span> or <span class=k>join failed</span> above. Use <b>Scan</b> in the Data offload card to confirm the logger can see your network.</p>
 </div></details>
 
 <details><summary>&#128190; Your data &amp; log files</summary><div class=db>
@@ -459,7 +474,11 @@ function clampDim(v){v=parseInt(v,10);if(isNaN(v))v=10;if(v<1)v=1;if(v>240)v=240
 function setDim(v){v=clampDim(v);id('dim').value=v;id('dimn').value=v;}
 function syncDim(src){setDim(src==='n'?id('dimn').value:id('dim').value);}
 function go(v){var n=document.getElementsByClassName('view');for(var i=0;i<n.length;i++)n[i].classList.remove('on');
-id('v_'+v).classList.add('on');window.scrollTo(0,0);if(v==='logs')loadLogs();}
+id('v_'+v).classList.add('on');window.scrollTo(0,0);if(v==='logs')loadLogs();
+if(v==='settings'){if(+V('ds_mode')===1)dsAutoScan();refreshSyncStatus();}}   // scan + refresh sync/test result on open
+function refreshSyncStatus(){fetch('/api/state').then(r=>r.json()).then(function(s){
+if(s.ds_stat&&+V('ds_mode')===1)id('ds_stat').innerHTML='<b>Sync status:</b> '+esc(s.ds_stat);
+if(s.ds_test)showTestMsg(s.ds_test,/^OK/.test(s.ds_test)?true:(/^FAILED/.test(s.ds_test)?false:null));}).catch(function(){});}
 function sync(){fetch('/api/sync',{method:'POST',body:JSON.stringify({epoch_ms:Date.now()})})
 .then(r=>r.text()).then(t=>{var e=id('ts');e.className='ok';e.textContent='time OK (synced '+new Date().toISOString().slice(11,19)+' UTC)';id('synccard').style.display='none';});}
 function parseGps(s){if(!s)return '';s=s.trim();
@@ -504,7 +523,9 @@ if(s.ds_pass!=null)id('ds_pass').value=s.ds_pass;
 if(s.ds_url!=null)id('ds_url').value=s.ds_url;
 if(s.ds_key!=null)id('ds_key').value=s.ds_key;
 if(s.ds_stat&&+s.ds_mode===1)id('ds_stat').innerHTML='<b>Sync status:</b> '+esc(s.ds_stat);
-dsModeUI();
+if(s.ds_test)showTestMsg(s.ds_test,/^OK/.test(s.ds_test)?true:(/^FAILED/.test(s.ds_test)?false:null));
+DS_ORIG=(s.ds_ssid||'')+'\n'+(s.ds_pass||'')+'\n'+(s.ds_mode||0);
+dsModeUI();xmodeUI();
 if(s.thresh)TM.forEach(function(m){var o=s.thresh[m]||{};TB.forEach(function(b){if(o[b]!=null)id(m+'_'+b).value=o[b];});});
 var t=id('ts'),good=(s.synced&&!s.approx);
 if(good){t.className='ok';t.textContent='time OK';id('synccard').style.display='none';}
@@ -517,12 +538,42 @@ c.classList.remove('found','absent');c.classList.add(ok?'found':'absent');
 d.textContent=ok?'detected':'not found';d.className='det '+(ok?'okd':'badd');}
 function paintDetect(d){if(!d)return;setSens('poet',d.poet);setSens('bar30',d.bar30);setSens('cels',d.cels);setSens('cyc',d.cyc);}
 function scanSensors(){fetch('/api/scan').then(r=>r.json()).then(paintDetect).catch(e=>{});}
-function dsModeUI(){id('ds_cloud').style.display=(+V('ds_mode')===1)?'block':'none';}
-function dsScan(){var p=id('ds_pick');p.style.display='block';p.innerHTML='<option value="">scanning (a few seconds)…</option>';
-fetch('/api/wifiscan').then(r=>r.json()).then(function(a){p.innerHTML='';
-var o0=document.createElement('option');o0.value='';o0.textContent=a.length?('pick a network ('+a.length+' seen)…'):'no 2.4 GHz networks seen — check hotspot band/screen';p.appendChild(o0);
-a.forEach(function(n){var o=document.createElement('option');o.value=n.ssid;o.textContent=n.ssid+'  ('+n.rssi+' dBm)';p.appendChild(o);});})
-.catch(function(){p.innerHTML='<option value="">scan failed — try again</option>';});}
+function xmodeUI(){var on=id('xmode').checked,n=document.getElementsByClassName('adv');
+for(var i=0;i<n.length;i++)n[i].style.display=on?'block':'none';}
+function dsModeUI(){var m=+V('ds_mode');id('ds_cloud').style.display=(m===1)?'block':'none';
+id('ds_local').style.display=(m===2)?'block':'none';
+if(m===1&&id('v_settings').classList.contains('on'))dsAutoScan();}   // user just picked Cloud on the open tab
+/* The network dropdown IS the SSID source. Auto-scans when the Data offload card opens; while it
+   scans it reads "Please wait…"; picking a network fills the (hidden) ds_ssid the save reads, and
+   an "Enter manually…" row reveals a text box for a network that isn't currently broadcasting. */
+var DS_ORIG='';   // ssid\npass\nmode at load — so Save only re-tests Wi-Fi when creds actually changed
+function dsAutoScan(){var p=id('ds_pick');p.disabled=true;
+p.innerHTML='<option value="">Please wait… scanning for networks</option>';
+fetch('/api/wifiscan').then(r=>r.json()).then(renderPick)
+.catch(function(){p.disabled=false;p.innerHTML='<option value="">scan failed — tap Rescan</option>';});}
+function renderPick(a){var p=id('ds_pick');p.disabled=false;p.innerHTML='';var cur=id('ds_ssid').value.trim(),found=false;
+var t=document.createElement('option');t.value='';t.textContent=a.length?('— pick a network ('+a.length+' found) —'):'— no 2.4 GHz networks seen —';p.appendChild(t);
+a.forEach(function(n){var o=document.createElement('option');o.value=n.ssid;o.textContent=n.ssid+'  ('+n.rssi+' dBm)';if(n.ssid===cur){o.selected=true;found=true;}p.appendChild(o);});
+if(cur&&!found){var s=document.createElement('option');s.value=cur;s.textContent=cur+'  (saved — not in range now)';s.selected=true;p.appendChild(s);}
+var man=document.createElement('option');man.value='__man__';man.textContent='Enter manually…';p.appendChild(man);
+dsPick();}
+function dsPick(){var v=id('ds_pick').value;
+if(v==='__man__'){id('ds_manwrap').style.display='block';id('ds_ssid').focus();}
+else{id('ds_manwrap').style.display='none';if(v)id('ds_ssid').value=v;}}
+/* One-tap credential test. The device steals the single radio to associate (may briefly drop this
+   phone from the logger AP), so on a lost response we poll /api/state for the stored ds_test. */
+function dsTest(){var ss=id('ds_ssid').value.trim(),pw=id('ds_pass').value;
+if(+V('ds_mode')!==1){showTestMsg('Set offload to Cloud first.',false);return;}
+if(!ss){showTestMsg('Pick or enter a network first.',false);return;}
+showTestMsg('Testing… your phone may drop from the logger for ~15 s, then reconnect — this updates on its own.',null);
+fetch('/api/wifitest?ssid='+encodeURIComponent(ss)+'&pass='+encodeURIComponent(pw)).then(r=>r.json())
+.then(function(j){showTestMsg(j.msg||(j.ok?'OK':'failed'),!!j.ok);})
+.catch(function(){pollTest(0);});}
+function pollTest(i){if(i>24){showTestMsg('No result yet — reconnect to WaterQuality-Logger and tap Test again.',false);return;}
+fetch('/api/state').then(r=>r.json()).then(function(s){var t=(s&&s.ds_test)||'';
+if(/^OK/.test(t))showTestMsg(t,true);else if(/^FAILED/.test(t))showTestMsg(t,false);else setTimeout(function(){pollTest(i+1);},1500);})
+.catch(function(){setTimeout(function(){pollTest(i+1);},1500);});}
+function showTestMsg(m,ok){var e=id('ds_testmsg');e.innerHTML=(ok===true?'<b class=okd>Wi-Fi OK — </b>':ok===false?'<b class=badd>Wi-Fi problem — </b>':'')+esc(m);}
 function payload(){return {mission:V('mission'),op:V('op'),site:V('site'),wt:V('wt'),accent:parseInt(V('accent')),gps:parseGps(V('gps')),wx:V('wx'),notes:V('notes'),
 poet_en:id('poet_en').checked,bar30_en:id('bar30_en').checked,cels_en:id('cels_en').checked,
 cyc_en:id('cyc_en').checked,cyc_u:V('cyc_u'),cyc_s:parseFloat(V('cyc_s')),dim:clampDim(V('dim')),
@@ -530,7 +581,17 @@ ds_mode:parseInt(V('ds_mode')),ds_ssid:V('ds_ssid').trim(),ds_pass:V('ds_pass'),
 thresh:buildThresh()};}
 function commit(m){fetch('/api/deploy',{method:'POST',body:JSON.stringify(payload())}).then(r=>r.text()).then(t=>{ok(m);go('home');}).catch(e=>{ok(m);go('home');});}
 function start(){commit('Mission saved. You can disconnect and dive.');}
-function saveSettings(){commit('Settings saved.');}
+function saveSettings(){
+// Save the full DOM as usual; if the Wi-Fi creds changed, kick a background credential test on
+// the way out (the device stores the result in ds_test — it shows next time Settings opens).
+var ss=id('ds_ssid').value.trim(),pw=id('ds_pass').value;
+var changed=((ss+'\n'+pw+'\n'+V('ds_mode'))!==DS_ORIG);
+var doTest=(+V('ds_mode')===1 && ss && pw && changed);
+fetch('/api/deploy',{method:'POST',body:JSON.stringify(payload())}).then(function(){
+if(doTest){fetch('/api/wifitest?ssid='+encodeURIComponent(ss)+'&pass='+encodeURIComponent(pw)).catch(function(){});
+ok('Settings saved — testing the Wi-Fi (the logger may drop offline for ~15 s). Reopen Settings to see the result.');}
+else ok('Settings saved.');
+go('home');}).catch(function(){ok('Settings saved.');go('home');});}
 function kb(n){return n<1024?n+' B':(n/1024).toFixed(1)+' KB';}
 function loadLogs(){id('loglist').textContent='loading...';
 fetch('/api/logs').then(r=>r.json()).then(function(a){

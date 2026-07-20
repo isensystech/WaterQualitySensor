@@ -54,9 +54,17 @@ Gotchas proven against the live project (don't re-learn these):
    synthetic dive: f412fa000001/dive0000.csv, mission "Cloud smoke test"; delete when
    real data flows)
 4. 000x_stations_readings.sql — base station tables (when base station work starts).
-5. DONE viewer app — supabase/functions/viewer/, reuses the portal chart renderer
+5. DONE viewer app (v1) — supabase/functions/viewer/, reuses the portal chart renderer
    (parseCsv/miniChart/drawCharts ported from firmware/src/portal_page.h — keep in sync).
    Auth users are created by hand: Dashboard -> Authentication -> Add user.
+6. NEW viewer app (v2, DiveViewer Phase 5) — apps/viewer/ (Vite+React+TS SPA, Cloudflare
+   Pages target). Migrations 0005-0009 add the collaboration layer (profiles/projects/
+   project_members, sites, samples, annotations/comments, thresholds) with project-scoped
+   RLS via SECURITY DEFINER membership helpers; the parse-dive edge function explodes the
+   CSV blob into `samples`. Code-complete + builds; NOT yet pushed/deployed — go-live steps
+   in apps/viewer/README.md. dives.project_id is NULLABLE (device inserts carry no project;
+   assigned later by scripts/bootstrap_viewer.sql / Phase 10). The v1 edge-function viewer
+   stays live until v2 is deployed. Spec: firmware/dev_docs/DiveViewer-To-Do.md.
 
 ## Don't
 - Don't put secrets in git.
