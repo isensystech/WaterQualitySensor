@@ -38,8 +38,20 @@ Secret key (sb_secret_...) = base station + edge functions only. Never on a devi
 FK on dives.device_id IS the allowlist gate (FK validation bypasses RLS -> no MAC-list leak).
 
 Gotchas proven against the live project (don't re-learn these):
-- New (2026) projects do NOT auto-grant anon/authenticated on new public tables —
-  every migration adding a table MUST add explicit grants or PostgREST 401s.
+- Grants on new tables — CORRECTION (verified live 2026-07-20 via pg_default_acl): this
+  project HAS default privileges that grant anon/authenticated/service_role ALL on every new
+  public table created by `postgres` (i.e. every migration). So new tables do NOT 401 for lack
+  of a grant — explicit `grant` lines are redundant/defensive, and **RLS is the only gate**.
+  Consequence: anon gets select/insert/delete GRANTS on every new table too; a table is safe
+  only because it has no anon POLICY (RLS then returns [] / blocks writes). An anon SELECT on
+  an RLS-protected table returns 200 [] (rows hidden), NOT 401. (The earlier "2026 projects
+  don't auto-grant, must add explicit grants or 401" note did not hold up under inspection —
+  possibly an earlier state, or a table created by a non-postgres role. Trust pg_default_acl.)
+  To make anon fail-closed at the privilege layer on a table, REVOKE explicitly. Migration
+  0010_dives_anon_insert_only.sql does exactly this for `dives` (revoke all + grant insert →
+  anon is INSERT-only, an anon SELECT there now 401s), so `dives` is belt-and-suspenders while
+  every other table stays broad-grant + RLS-only. Project-wide grant hardening is a deliberate
+  later change. (Verify with apps/viewer/SMOKE-TEST.md sections C2 + D.)
 - Anon upserts are impossible here: ANY ON CONFLICT path (PostgREST merge-/ignore-
   duplicates, storage x-upsert) fails RLS for a role with no SELECT policy. Device
   contract is therefore PLAIN insert/POST; duplicate -> 409 = "already synced"

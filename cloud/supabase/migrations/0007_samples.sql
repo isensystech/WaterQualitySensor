@@ -30,6 +30,12 @@ alter table public.samples enable row level security;
 grant select on public.samples to authenticated;
 -- writes are performed by parse-dive with the service-role key, which bypasses RLS —
 -- so no insert/update grant or policy for authenticated/anon here (read-only surface).
+-- Defensive/idempotent: this project's default privileges already grant service_role ALL on
+-- new public tables (verified live on dives/allowed_devices), so parse-dive's writes work
+-- regardless; this keeps them working if that default is ever tightened. (RLS is bypassed by
+-- service_role either way.) NOTE: those same defaults also grant ANON select/insert/delete on
+-- samples — RLS (no anon policy) is what keeps anon out. See SMOKE-TEST.md "Optional hardening".
+grant all on public.samples to service_role;
 
 drop policy if exists samples_read_member on public.samples;
 create policy samples_read_member on public.samples

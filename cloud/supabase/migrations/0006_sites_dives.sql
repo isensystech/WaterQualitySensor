@@ -93,6 +93,11 @@ create policy dives_update_member on public.dives
   using (project_id is not null and public.can_annotate(project_id))
   with check (project_id is null or public.can_annotate(project_id));
 grant update on public.dives to authenticated;
+-- parse-dive rolls summary fields (row_count/started_at/ended_at) forward with the
+-- service-role key. Verified live: service_role already holds full privileges on dives via
+-- this project's public-schema default privileges, so this GRANT is defensive/idempotent
+-- (keeps parse-dive working if those defaults are ever tightened). service_role bypasses RLS.
+grant all on public.dives to service_role;
 
 -- ---------------------------------------------------------------- storage read path (TIGHTEN)
 -- 0001 let any authed user read the whole 'dives' bucket. Scope to project membership.
