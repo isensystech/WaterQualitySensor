@@ -7,6 +7,9 @@
   // IMPORTANT: `name` MUST equal the Project name you type in the Cloudflare wizard, or the
   // auto-created build token won't have permission to deploy to the right Worker.
   "name": "wql-dive-viewer",
+  // Account id is not a secret (it's in dashboard URLs). Putting it here means a deployer only
+  // needs CLOUDFLARE_API_TOKEN in their env — not the account id too. `npm run deploy` does the rest.
+  "account_id": "8682daef9f8979535dae223c9d22c52a",
   "compatibility_date": "2025-01-01",
   "assets": {
     "directory": "./dist",

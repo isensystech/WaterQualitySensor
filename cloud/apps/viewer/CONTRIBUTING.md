@@ -67,13 +67,21 @@ component lib is your call; just keep the build green and the bundle sane.
 - **Chart math:** decimation + NaN-gap handling in `chart.ts` exist so long dives render honestly
   (spikes survive, sensor-off gaps stay gaps). Keep that behavior if you rework the charts.
 
-## 5. Workflow
-Branch off `main`, open a PR so Scott can review:
+## 5. Commit + publish
+You and Scott commit **straight to `main`** (no PRs). Before pushing, make sure it builds:
 ```bash
-git switch -c looks/<what-youre-doing>
-# … edit, npm run build …
-git push -u origin looks/<what-youre-doing>   # needs collaborator access on the repo
-gh pr create --fill                            # or open the PR on GitHub
+npm run build                       # tsc + vite — keep it green
+git pull --rebase                   # get Scott's latest first
+git add -A && git commit -m "looks: …" && git push
 ```
-Deploy target is Cloudflare Pages (not wired up yet); for now `npm run dev` / `npm run preview`
-is the way to see it. Questions → Scott.
+
+### Publish to the live site
+Live URL: **https://wql-dive-viewer.still-glitter-44b0.workers.dev** (Cloudflare Workers static
+assets). Pushing to `main` does **not** auto-deploy — publishing is one manual command:
+```bash
+export CLOUDFLARE_API_TOKEN="<token from Scott>"   # account-scoped; do NOT commit it
+npm run deploy                                      # = vite build + wrangler deploy
+```
+The account id is already in `wrangler.jsonc`, so the token is the only thing you need to set.
+**Or just tell Claude Code: "redeploy the viewer"** — it runs `npm run deploy` from
+`cloud/apps/viewer`. Questions → Scott.
