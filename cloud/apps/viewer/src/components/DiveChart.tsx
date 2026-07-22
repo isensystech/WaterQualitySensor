@@ -1,10 +1,14 @@
-import { useMemo, useState } from "react";
-import { CSER, renderDive, fmtT, type Band, type ParsedCsv } from "../lib/chart";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "../auth/AuthProvider";
+import { DiveCharts } from "./DiveCharts";
+import { DiveMeta } from "./DiveMeta";
+import { AnnotationModal } from "./AnnotationModal";
+import { CSER, fmtT, type Band, type ParsedCsv } from "../lib/chart";
+import { fetchDiveAnnotations, groupBySeq } from "../lib/annotations";
 import type { Dive } from "../lib/dives";
 
-// Screen 2 core: multi-metric view with per-metric vertical scaling (each mini-chart
-// auto-scales to its own range), metric visibility toggles, and a threshold-marker toggle.
-// Rendering is the ported portal_page.h SVG builder (Hard Rule 6).
+// Dive graph container: metadata pictograms + metric-visibility controls + the interactive
+// single-column charts (synced crosshair, hover readout, POI names) + the POI annotation modal.
 export function DiveChart({
   parsed, dive, deviceLabel, csvText, thresholds, onClose,
 }: {
@@ -15,21 +19,36 @@ export function DiveChart({
   thresholds: Record<string, Band>;
   onClose: () => void;
 }) {
+  const { session } = useAuth();
+  const authorId = session?.user.id ?? "";
+
   const [enabled, setEnabled] = useState<Set<string>>(() => new Set(CSER.map((m) => m.k)));
   const [showRaw, setShowRaw] = useState(false);
   const [showThresholds, setShowThresholds] = useState(true);
+  const [poiTitles, setPoiTitles] = useState<Map<number, string>>(new Map());
+  const [modal, setModal] = useState<{ seq: number; ordinal: number; timeLabel: string } | null>(null);
 
   const hasThresholds = Object.keys(thresholds).length > 0;
 
-  const render = useMemo(
-    () => renderDive(parsed, {
-      enabled, showRaw,
-      showThresholds: showThresholds && hasThresholds,
-      thresholds,
-      cyclopsUnits: dive.cyclops_units ?? undefined,
-    }),
-    [parsed, enabled, showRaw, showThresholds, hasThresholds, thresholds, dive.cyclops_units],
-  );
+  const loadAnn = useCallback(async () => {
+    try {
+      const g = groupBySeq(await fetchDiveAnnotations(dive.id));
+      const m = new Map<number, string>();
+      g.forEach((v, seq) => { if (v.note?.title) m.set(seq, v.note.title); });
+      setPoiTitles(m);
+    } catch { /* annotations are optional; ignore load errors */ }
+  }, [dive.id]);
+  useEffect(() => { loadAnn(); }, [loadAnn]);
+
+  const msArr = useMemo(() => {
+    const i = parsed.idx["ms"];
+    return parsed.rows.map((r) => (i != null ? r[i] : NaN));
+  }, [parsed]);
+
+  const openPoi = (seq: number, ordinal: number) => {
+    const t = !isNaN(msArr[seq]) && !isNaN(msArr[0]) ? fmtT(msArr[seq] - msArr[0]) : String(seq);
+    setModal({ seq, ordinal, timeLabel: t });
+  };
 
   const toggle = (k: string) =>
     setEnabled((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -42,21 +61,17 @@ export function DiveChart({
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
 
-  const { charts, pois, xMin, xMax, skipped, decimated } = render;
-
   return (
     <div className="c">
       <div className="chdr">
-        <b>{dive.filename} — {deviceLabel}</b>
+        <b>{dive.label || dive.filename} — {deviceLabel}</b>
         <span>
           <button className="xbtn" onClick={dlCsv}>download CSV</button>{" "}
           <button className="xbtn" onClick={onClose}>close</button>
         </span>
       </div>
 
-      {parsed.meta.length > 0 && (
-        <div className="cmeta">{parsed.meta.map((m, i) => <div key={i}>{m}</div>)}</div>
-      )}
+      <DiveMeta dive={dive} />
 
       <div className="controls">
         {CSER.map((m) => (
@@ -76,31 +91,26 @@ export function DiveChart({
         </label>
       </div>
 
-      {skipped.length > 0 && (
-        <div className="cnote">No data (sensor off or uncalibrated): {skipped.join(", ")}.</div>
-      )}
-      {decimated && (
-        <div className="cnote">Long dive — min/max decimated to fit; excursions preserved.</div>
+      {!parsed.rows.length ? (
+        <p className="hint">No data rows in this dive.</p>
+      ) : (
+        <DiveCharts
+          parsed={parsed}
+          thresholds={thresholds}
+          enabled={enabled}
+          showRaw={showRaw}
+          showThresholds={showThresholds && hasThresholds}
+          cyclopsUnits={dive.cyclops_units ?? undefined}
+          poiTitles={poiTitles}
+          onPoiClick={openPoi}
+        />
       )}
 
-      {charts.length > 0 ? (
-        <>
-          <div className="charts">
-            {charts.map((c) => (
-              <div key={c.key} dangerouslySetInnerHTML={{ __html: c.svg }} />
-            ))}
-          </div>
-          <div className="xax">
-            <span>0:00</span><span>{fmtT((xMax - xMin) / 2)}</span><span>{fmtT(xMax - xMin)}</span>
-          </div>
-          <div className="clegend">
-            <span><i style={{ background: "rgba(255,164,0,.18)" }} />warn</span>
-            <span><i style={{ background: "rgba(255,59,48,.20)" }} />alarm</span>
-            {pois.length > 0 && <span><i style={{ background: "#c98bff" }} />POI ({pois.length})</span>}
-          </div>
-        </>
-      ) : (
-        <p className="hint">No plottable metrics selected (or all sensors off / uncalibrated).</p>
+      {modal && authorId && (
+        <AnnotationModal
+          diveId={dive.id} seq={modal.seq} ordinal={modal.ordinal} timeLabel={modal.timeLabel}
+          authorId={authorId} onClose={() => setModal(null)} onSaved={loadAnn}
+        />
       )}
     </div>
   );

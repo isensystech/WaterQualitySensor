@@ -1,10 +1,13 @@
-// chart.ts — SVG small-multiples renderer, PORTED from firmware/src/portal_page.h
-// (Hard Rule 6: same look, same NaN-gap handling, same min/max-preserving decimation, same
-// threshold bands). Kept as string-building SVG — no chart lib, no CDN — so the viewer chart
-// is byte-for-byte the shape the logger's own portal draws. Keep in sync with portal_page.h.
+// chart.ts — chart data-prep + geometry, ported from firmware/src/portal_page.h (Hard Rule 6:
+// same NaN-gap handling, same min/max-preserving decimation, same threshold bands). v2 returns
+// a structured model (not SVG strings) so the React chart can add a synced crosshair + hover
+// readout while keeping the exact look. Keep the metric list / colors in sync with portal_page.h.
 
-const CVW = 336, CHH = 120, CpadL = 44, CpadR = 8, CpadT = 18, CpadB = 14;
-const CpW = CVW - CpadL - CpadR, CpH = CHH - CpadT - CpadB;
+// High-resolution coordinate space (the firmware portal used a tiny 336x132 box for a 240px
+// TFT; stretched to full width that looked upscaled/chunky). A ~1000-wide viewBox renders at
+// ~1:1 on screen, so strokes/fonts are crisp and the decimation target is wide = smoother lines.
+export const CVW = 1000, CHH = 220, CpadL = 54, CpadR = 16, CpadT = 26, CpadB = 24;
+export const CpW = CVW - CpadL - CpadR, CpH = CHH - CpadT - CpadB;
 
 export type Pt = [number, number];
 export interface Band { wlo?: number | null; whi?: number | null; alo?: number | null; ahi?: number | null }
@@ -18,16 +21,15 @@ export interface ParsedCsv {
 
 interface MetricDef {
   k: string;
-  cols: [string, number][]; // preference list: [column, scale]
+  cols: [string, number][];
   lab: string;
   u: string;
   col: string;
   inv?: number;
-  band?: string; // threshold key
-  opt?: number;  // optional metric -> no "no data" note when absent
+  band?: string;
+  opt?: number;
 }
 
-// default metric charts; temp prefers Celsius -> BAR30 -> POET(milli-C). band = threshold key
 export const CSER: MetricDef[] = [
   { k: "depth", cols: [["depth_m", 1]], lab: "Depth", u: "m", col: "#58a6ff", inv: 1, band: "depth" },
   { k: "temp", cols: [["cels_T_C", 1], ["bar30T_C", 1], ["poetT_mC", 0.001]], lab: "Temp", u: "°C", col: "#ff8c5a", band: "temp" },
@@ -38,7 +40,6 @@ export const CSER: MetricDef[] = [
   { k: "cyc", cols: [["cyc_conc", 1]], lab: "Fluorometry", u: "", col: "#6ee07a", band: "cyc", opt: 1 },
 ];
 
-// diagnostic raw channels, hidden behind the "show raw" toggle
 export const CRAW: { col: string; lab: string; u: string }[] = [
   { col: "P_mbar", lab: "Pressure", u: "mbar" },
   { col: "ugs_uV", lab: "pH raw (Ugs)", u: "µV" },
@@ -48,11 +49,10 @@ export const CRAW: { col: string; lab: string; u: string }[] = [
   { col: "cyc_V", lab: "Cyclops raw", u: "V" },
 ];
 
-export const esc = (s: unknown): string =>
-  String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const Nn = (x: string | undefined): number => (x == null || x === "" ? NaN : +x);
 const clmp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 export const fmtNum = (v: number): string => {
+  if (isNaN(v)) return "—";
   const a = Math.abs(v);
   if (a >= 1000) return v.toFixed(0);
   if (a >= 100) return v.toFixed(1);
@@ -82,19 +82,18 @@ export function parseCsv(t: string): ParsedCsv {
   return { meta, cols: cols || [], rows, idx };
 }
 
-// first column with any data wins (for temp's preference list); empty cell -> NaN gap
-function seriesPts(P: ParsedCsv, X: number[], cols: [string, number][]): Pt[] | null {
+// full per-sample values for the first column with any data (temp fallback list); NaN = gap
+function seriesFull(P: ParsedCsv, cols: [string, number][]): number[] | null {
   for (const [name, sc] of cols) {
     const i = P.idx[name];
     if (i == null) continue;
-    const pts: Pt[] = [];
+    const out: number[] = [];
     let any = false;
     for (let r = 0; r < P.rows.length; r++) {
-      let v = P.rows[r][i];
-      if (!isNaN(v)) { any = true; v *= sc; }
-      pts.push([X[r], v]);
+      const v = P.rows[r][i];
+      if (!isNaN(v)) { any = true; out.push(v * sc); } else out.push(NaN);
     }
-    if (any) return pts;
+    if (any) return out;
   }
   return null;
 }
@@ -120,111 +119,106 @@ function decimate(pts: Pt[], W: number): { pts: Pt[]; dec: boolean } {
   return { pts: out, dec: true };
 }
 
-function linePath(pts: Pt[], X: (x: number) => number, Y: (y: number) => number): string {
+// ----- geometry helpers (shared so the crosshair maps identically on every stacked chart) -----
+export const xPix = (x: number, xMin: number, xMax: number): number =>
+  CpadL + ((x - xMin) / ((xMax - xMin) || 1)) * CpW;
+export const yPix = (v: number, yMin: number, yMax: number, inv: boolean): number => {
+  const rng = (yMax - yMin) || 1;
+  return inv ? CpadT + ((v - yMin) / rng) * CpH : CpadT + ((yMax - v) / rng) * CpH;
+};
+
+export function bandRects(b: Band | undefined, yMin: number, yMax: number, inv: boolean):
+  { y: number; h: number; fill: string }[] {
+  if (!b) return [];
+  const wlo = b.wlo ?? NaN, whi = b.whi ?? NaN, alo = b.alo ?? NaN, ahi = b.ahi ?? NaN;
+  const R = "rgba(255,59,48,.20)", A = "rgba(255,164,0,.18)";
+  const out: { y: number; h: number; fill: string }[] = [];
+  const rect = (loV: number, hiV: number, fill: string) => {
+    loV = clmp(loV, yMin, yMax); hiV = clmp(hiV, yMin, yMax);
+    if (loV >= hiV) return;
+    const y1 = yPix(hiV, yMin, yMax, inv), y2 = yPix(loV, yMin, yMax, inv);
+    const top = Math.min(y1, y2), h = Math.abs(y2 - y1);
+    if (h < 0.5) return;
+    out.push({ y: top, h, fill });
+  };
+  if (!isNaN(ahi)) rect(ahi, yMax, R);
+  if (!isNaN(whi)) rect(whi, isNaN(ahi) ? yMax : ahi, A);
+  if (!isNaN(wlo)) rect(isNaN(alo) ? yMin : alo, wlo, A);
+  if (!isNaN(alo)) rect(yMin, alo, R);
+  return out;
+}
+
+// SVG path for a NaN-gapped line in pixel space
+export function linePath(pts: Pt[], xMin: number, xMax: number, yMin: number, yMax: number, inv: boolean): string {
   let d = "", pen = false;
   for (const p of pts) {
-    const y = p[1];
-    if (isNaN(y)) { pen = false; continue; }
-    d += (pen ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(y).toFixed(1) + " ";
+    if (isNaN(p[1])) { pen = false; continue; }
+    d += (pen ? "L" : "M") + xPix(p[0], xMin, xMax).toFixed(1) + " " + yPix(p[1], yMin, yMax, inv).toFixed(1) + " ";
     pen = true;
   }
   return d;
 }
 
-function bandRect(loV: number, hiV: number, Y: (y: number) => number, yMin: number, yMax: number, fill: string): string {
-  loV = clmp(loV, yMin, yMax); hiV = clmp(hiV, yMin, yMax);
-  if (loV >= hiV) return "";
-  const y1 = Y(hiV), y2 = Y(loV), top = Math.min(y1, y2), h = Math.abs(y2 - y1);
-  if (h < 0.5) return "";
-  return `<rect x="${CpadL}" y="${top.toFixed(1)}" width="${CpW}" height="${h.toFixed(1)}" fill="${fill}" />`;
+export interface MetricModel {
+  key: string; label: string; unit: string; color: string; inv: boolean;
+  band?: Band;
+  full: number[];       // value per sample index (scaled, NaN = gap) — hover readout + dot
+  drawPts: Pt[];        // decimated points for the line
+  yMin: number; yMax: number;
+  decimated: boolean;
 }
-
-// shade alarm (red) + warn (amber) zones; NaN/undefined bound = that bound disabled
-function bandSvg(b: Band | undefined, Y: (y: number) => number, yMin: number, yMax: number): string {
-  if (!b) return "";
-  const wlo = b.wlo ?? NaN, whi = b.whi ?? NaN, alo = b.alo ?? NaN, ahi = b.ahi ?? NaN;
-  const R = "rgba(255,59,48,.20)", A = "rgba(255,164,0,.18)";
-  let s = "";
-  if (!isNaN(ahi)) s += bandRect(ahi, yMax, Y, yMin, yMax, R);
-  if (!isNaN(whi)) s += bandRect(whi, isNaN(ahi) ? yMax : ahi, Y, yMin, yMax, A);
-  if (!isNaN(wlo)) s += bandRect(isNaN(alo) ? yMin : alo, wlo, Y, yMin, yMax, A);
-  if (!isNaN(alo)) s += bandRect(yMin, alo, Y, yMin, yMax, R);
-  return s;
+export interface ChartModel {
+  X: number[];          // ms per sample index (x axis)
+  xMin: number; xMax: number;
+  pois: number[];       // sample indices flagged poi=1
+  metrics: MetricModel[];
+  skipped: string[];
 }
-
-interface ChartOpts { pts: Pt[]; lab: string; u: string; col: string; inv?: number; band?: Band }
-
-function miniChart(o: ChartOpts, xMin: number, xMax: number, pois: number[]): string {
-  let yMin = Infinity, yMax = -Infinity;
-  for (const p of o.pts) { const y = p[1]; if (!isNaN(y)) { if (y < yMin) yMin = y; if (y > yMax) yMax = y; } }
-  if (yMin === Infinity) { yMin = 0; yMax = 1; }
-  if (yMin === yMax) { yMin -= 1; yMax += 1; }
-  const pd = (yMax - yMin) * 0.08; yMin -= pd; yMax += pd;
-  const rng = (yMax - yMin) || 1, xr = (xMax - xMin) || 1;
-  const Y = (v: number) => (o.inv ? CpadT + ((v - yMin) / rng) * CpH : CpadT + ((yMax - v) / rng) * CpH);
-  const X = (x: number) => CpadL + ((x - xMin) / xr) * CpW;
-  let s = `<svg viewBox="0 0 ${CVW} ${CHH}">`;
-  s += `<rect x="${CpadL}" y="${CpadT}" width="${CpW}" height="${CpH}" fill="none" stroke="#2a3252" />`;
-  s += bandSvg(o.band, Y, yMin, yMax);
-  for (const px0 of pois) {
-    const px = X(px0).toFixed(1);
-    s += `<line x1="${px}" y1="${CpadT}" x2="${px}" y2="${CpadT + CpH}" stroke="#c98bff" stroke-dasharray="3 3" opacity="0.7" />`;
-  }
-  s += `<path d="${linePath(o.pts, X, Y)}" fill="none" stroke="${o.col}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />`;
-  s += `<text x="4" y="13" fill="${o.col}" font-size="11" font-weight="700">${esc(o.lab)}${o.u ? " (" + esc(o.u) + ")" : ""}</text>`;
-  s += `<text x="${CpadL - 3}" y="${CpadT + 4}" fill="#9aa3c0" font-size="9" text-anchor="end">${fmtNum(o.inv ? yMin : yMax)}</text>`;
-  s += `<text x="${CpadL - 3}" y="${CpadT + CpH}" fill="#9aa3c0" font-size="9" text-anchor="end">${fmtNum(o.inv ? yMax : yMin)}</text>`;
-  return s + "</svg>";
-}
-
-export interface RenderOpts {
+export interface BuildOpts {
   enabled: Set<string>;
   showRaw: boolean;
   showThresholds: boolean;
   thresholds: Record<string, Band>;
   cyclopsUnits?: string;
 }
-export interface DiveRender {
-  charts: { key: string; label: string; svg: string }[];
-  pois: number[];
-  xMin: number;
-  xMax: number;
-  skipped: string[];
-  decimated: boolean;
-}
 
-// drawCharts() equivalent: builds the per-metric SVGs for the enabled metrics.
-export function renderDive(D: ParsedCsv, opts: RenderOpts): DiveRender {
+export function buildChartModel(D: ParsedCsv, opts: BuildOpts): ChartModel {
   const mi = D.idx["ms"], pi = D.idx["poi"];
-  const X = new Array<number>(D.rows.length), pois: number[] = [];
-  for (let r = 0; r < D.rows.length; r++) {
+  const n = D.rows.length;
+  const X = new Array<number>(n), pois: number[] = [];
+  for (let r = 0; r < n; r++) {
     const xv = mi != null ? D.rows[r][mi] : NaN;
     X[r] = isNaN(xv) ? r : xv;
-    if (pi != null && D.rows[r][pi] === 1) pois.push(X[r]);
+    if (pi != null && D.rows[r][pi] === 1) pois.push(r);
   }
-  let xMin = X[0] ?? 0, xMax = X[X.length - 1] ?? 1;
+  let xMin = X[0] ?? 0, xMax = X[n - 1] ?? 1;
   if (!(xMax > xMin)) xMax = xMin + 1;
 
-  const charts: DiveRender["charts"] = [], skipped: string[] = [];
-  let decimated = false;
+  const metrics: MetricModel[] = [], skipped: string[] = [];
+  const push = (def: { key: string; label: string; unit: string; color: string; inv: boolean; band?: Band; cols: [string, number][]; opt?: boolean }) => {
+    const full = seriesFull(D, def.cols);
+    if (!full) { if (!def.opt) skipped.push(def.label); return; }
+    let yMin = Infinity, yMax = -Infinity;
+    for (const v of full) if (!isNaN(v)) { if (v < yMin) yMin = v; if (v > yMax) yMax = v; }
+    if (yMin === Infinity) { yMin = 0; yMax = 1; }
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const pd = (yMax - yMin) * 0.08; yMin -= pd; yMax += pd;
+    const dd = decimate(full.map((v, r) => [X[r], v] as Pt), CpW);
+    metrics.push({ key: def.key, label: def.label, unit: def.unit, color: def.color, inv: def.inv, band: def.band, full, drawPts: dd.pts, yMin, yMax, decimated: dd.dec });
+  };
+
   for (const cf of CSER) {
     if (!opts.enabled.has(cf.k)) continue;
-    const pts = seriesPts(D, X, cf.cols);
-    if (!pts) { if (!cf.opt) skipped.push(cf.lab); continue; }
-    const dd = decimate(pts, CpW);
-    if (dd.dec) decimated = true;
-    const band = opts.showThresholds && cf.band ? opts.thresholds[cf.band] : undefined;
-    const u = cf.k === "cyc" ? (opts.cyclopsUnits || cf.u) : cf.u;
-    charts.push({ key: cf.k, label: cf.lab, svg: miniChart({ pts: dd.pts, lab: cf.lab, u, col: cf.col, inv: cf.inv, band }, xMin, xMax, pois) });
+    push({
+      key: cf.k, label: cf.lab, color: cf.col, inv: !!cf.inv, cols: cf.cols, opt: !!cf.opt,
+      unit: cf.k === "cyc" ? (opts.cyclopsUnits || cf.u) : cf.u,
+      band: opts.showThresholds && cf.band ? opts.thresholds[cf.band] : undefined,
+    });
   }
   if (opts.showRaw) {
     for (const rf of CRAW) {
-      const rpts = seriesPts(D, X, [[rf.col, 1]]);
-      if (!rpts) continue;
-      const rd = decimate(rpts, CpW);
-      if (rd.dec) decimated = true;
-      charts.push({ key: "raw:" + rf.col, label: rf.lab, svg: miniChart({ pts: rd.pts, lab: rf.lab, u: rf.u, col: "#9aa3c0" }, xMin, xMax, pois) });
+      push({ key: "raw:" + rf.col, label: rf.lab, unit: rf.u, color: "#9aa3c0", inv: false, cols: [[rf.col, 1]], opt: true });
     }
   }
-  return { charts, pois, xMin, xMax, skipped, decimated };
+  return { X, xMin, xMax, pois, metrics, skipped };
 }

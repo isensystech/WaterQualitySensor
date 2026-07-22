@@ -93,3 +93,43 @@ button.ghost { background: #1d2440; color: #9aa3c0; }
 .clegend { display: flex; gap: 14px; font-size: 12px; color: #9aa3c0; margin-top: 6px; }
 .clegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .xax { display: flex; justify-content: space-between; font-size: 11px; color: #9aa3c0; margin-top: 4px; }
+
+/* ---- v2: metadata pictograms ---- */
+.metawrap { margin: 4px 0 10px; }
+.metarow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+.metachip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; background: #0c1020; border: 1px solid #2a3252; border-radius: 8px; padding: 4px 9px; color: #e8eaf0; max-width: 100%; }
+.metachip .mi { font-size: 13px; }
+.metalabel { font-size: 11px; color: #9aa3c0; text-transform: uppercase; letter-spacing: .04em; margin-right: 2px; }
+.calchip { font-size: 11.5px; border-radius: 6px; padding: 3px 7px; border: 1px solid #2a3252; }
+.calchip.on { color: #5dcaa5; border-color: #2f6f52; background: #0f2018; }
+.calchip.off { color: #6b7699; background: #0c1020; }
+
+/* ---- v2: interactive charts ---- */
+.readout { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; background: #12172b; border: 1px solid #2a3252; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
+.rtime { font-family: ui-monospace, monospace; font-size: 12px; color: #19c3c3; min-width: 66px; font-weight: 700; }
+.rval { font-size: 12px; color: #9aa3c0; display: inline-flex; align-items: center; gap: 5px; }
+.rval i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.rval b { color: #e8eaf0; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+.mchart { width: 100%; height: auto; background: #0c1020; border: 1px solid #2a3252; border-radius: 8px; display: block; }
+
+/* ---- v2: map ---- */
+.cardh { color: #19c3c3; margin: 0 0 10px; font-size: 15px; }
+.mapbox { width: 100%; height: 340px; border-radius: 8px; overflow: hidden; border: 1px solid #2a3252; }
+.mappop { font-size: 12px; color: #0c1020; }
+.mappop i { color: #556; }
+
+/* ---- v2: annotation modal ---- */
+.modalback { position: fixed; inset: 0; background: rgba(6,10,20,.72); display: flex; align-items: flex-start; justify-content: center; padding: 5vh 16px; z-index: 50; overflow: auto; }
+.modal { background: #161b30; border: 1px solid #2a3252; border-radius: 14px; padding: 18px; width: 100%; max-width: 520px; }
+.fld { display: block; font-size: 12px; color: #9aa3c0; margin: 10px 0 0; }
+.fld input, .fld textarea { width: 100%; margin-top: 5px; background: #0c1020; border: 1px solid #2a3252; color: #fff; border-radius: 8px; padding: 10px; font-size: 14px; font-family: inherit; resize: vertical; }
+.phdr { font-size: 12px; color: #9aa3c0; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+.photos { display: flex; flex-wrap: wrap; gap: 8px; }
+.photo { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid #2a3252; }
+.photo img { width: 100%; height: 100%; object-fit: cover; }
+.phload { display: flex; align-items: center; justify-content: center; height: 100%; color: #9aa3c0; }
+.pdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: 14px; line-height: 1; }
+.photoadd { width: 84px; height: 84px; border: 1px dashed #3a4675; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 28px; color: #9aa3c0; cursor: pointer; background: #0c1020; }
+.photoadd.dis { opacity: .5; cursor: default; }
+.mactions { display: flex; gap: 8px; margin-top: 14px; }

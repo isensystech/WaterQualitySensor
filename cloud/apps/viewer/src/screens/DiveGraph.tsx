@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { Calendar } from "../components/Calendar";
 import { DiveChart } from "../components/DiveChart";
+import { MapCard } from "../components/MapCard";
 import { parseCsv, type ParsedCsv } from "../lib/chart";
 import {
   fetchDeviceLabels, fetchDives, fetchThresholds, thresholdsForDive,
@@ -61,6 +62,13 @@ export function DiveGraph() {
 
       {error && <p className="err">{error}</p>}
       {!data && !error && <p className="hint">Loading dives…</p>}
+
+      {data && (
+        <div className="c">
+          <h3 className="cardh">🗺️ Sites — where measurements were taken</h3>
+          <MapCard dives={data.dives} onSelect={openDive} />
+        </div>
+      )}
 
       {data && (
         <div className="layout">

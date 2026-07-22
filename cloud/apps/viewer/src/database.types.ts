@@ -70,6 +70,7 @@ export type Database = {
           image_path: string | null
           kind: string
           seq: number | null
+          title: string | null
         }
         Insert: {
           author_id: string
@@ -80,6 +81,7 @@ export type Database = {
           image_path?: string | null
           kind: string
           seq?: number | null
+          title?: string | null
         }
         Update: {
           author_id?: string
@@ -90,6 +92,7 @@ export type Database = {
           image_path?: string | null
           kind?: string
           seq?: number | null
+          title?: string | null
         }
         Relationships: [
           {
