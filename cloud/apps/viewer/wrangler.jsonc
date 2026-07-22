@@ -1,0 +1,15 @@
+{
+  // Cloudflare Workers "Static Assets" deploy for the Vite SPA. The Workers "Import a
+  // repository" wizard runs the Build command (npm run build -> ./dist) then the Deploy
+  // command (npx wrangler deploy), which reads THIS file to serve dist/ as static assets.
+  // (Workers has no "output directory" field like Pages — this `assets.directory` is it.)
+  //
+  // IMPORTANT: `name` MUST equal the Project name you type in the Cloudflare wizard, or the
+  // auto-created build token won't have permission to deploy to the right Worker.
+  "name": "wql-dive-viewer",
+  "compatibility_date": "2025-01-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
