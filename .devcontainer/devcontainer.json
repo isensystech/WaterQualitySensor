@@ -1,0 +1,17 @@
+{
+  // One-click GitHub Codespaces env for the DiveViewer frontend (zero local setup).
+  // Open the repo on GitHub -> Code -> Codespaces -> Create. It installs deps + seeds
+  // .env.local (public Supabase keys); then run `cd cloud/apps/viewer && npm run dev`.
+  "name": "WQL Dive Viewer (frontend)",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
+  "onCreateCommand": "cd cloud/apps/viewer && cp -n .env.example .env.local && npm install",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": { "label": "viewer dev server", "onAutoForward": "openPreview" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}

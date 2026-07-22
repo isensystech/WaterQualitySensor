@@ -10,7 +10,16 @@ interface. It is **not** bound by the logger's 240 px device screen, and the cha
 was ported from the firmware is **not** a design constraint — restyle it freely, introduce a
 design system, swap the chart look, whatever reads best on the web.
 
-## 1. Run it locally
+## 1. Run it
+
+**Zero-setup (GitHub Codespaces — recommended):** on the repo page → **Code → Codespaces → Create
+codespace on main**. The devcontainer installs deps and seeds `.env.local` for you; then in the
+terminal:
+```bash
+cd cloud/apps/viewer && npm run dev     # the port-5173 preview opens automatically
+```
+
+**Local:**
 ```bash
 git clone https://github.com/isensystech/WaterQualitySensor.git
 cd WaterQualitySensor/cloud/apps/viewer
