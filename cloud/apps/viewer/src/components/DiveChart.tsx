@@ -1,30 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { DiveCharts } from "./DiveCharts";
-import { DiveMeta } from "./DiveMeta";
+import { DiveInfo, DiveStatCards, diveStatCardRows } from "./DiveMeta";
 import { AnnotationModal } from "./AnnotationModal";
-import { CSER, fmtT, type Band, type ParsedCsv } from "../lib/chart";
+import { fmtT, type Band, type ParsedCsv } from "../lib/chart";
 import { fetchDiveAnnotations, groupBySeq } from "../lib/annotations";
 import type { Dive } from "../lib/dives";
 
-// Dive graph container: metadata pictograms + metric-visibility controls + the interactive
-// single-column charts (synced crosshair, hover readout, POI names) + the POI annotation modal.
+// Dive graph container: metadata pictograms + the interactive single-column charts (synced
+// crosshair, hover readout, POI names) + the POI annotation modal. Metric-visibility controls
+// (which metrics/thresholds/raw channels to show) used to live here too, but now live in their
+// own card in the left stack (see DiveGraph.tsx) — enabled/showRaw/showThresholds are passed in
+// as props instead of being local state.
 export function DiveChart({
-  parsed, dive, deviceLabel, csvText, thresholds, onClose,
+  parsed, dive, deviceLabel, csvText, thresholds, enabled, showRaw, showThresholds, onClose,
 }: {
   parsed: ParsedCsv;
   dive: Dive;
   deviceLabel: string;
   csvText: string;
   thresholds: Record<string, Band>;
+  enabled: Set<string>;
+  showRaw: boolean;
+  showThresholds: boolean;
   onClose: () => void;
 }) {
   const { session } = useAuth();
   const authorId = session?.user.id ?? "";
 
-  const [enabled, setEnabled] = useState<Set<string>>(() => new Set(CSER.map((m) => m.k)));
-  const [showRaw, setShowRaw] = useState(false);
-  const [showThresholds, setShowThresholds] = useState(true);
   const [poiTitles, setPoiTitles] = useState<Map<number, string>>(new Map());
   const [modal, setModal] = useState<{ seq: number; ordinal: number; timeLabel: string } | null>(null);
 
@@ -50,9 +53,6 @@ export function DiveChart({
     setModal({ seq, ordinal, timeLabel: t });
   };
 
-  const toggle = (k: string) =>
-    setEnabled((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-
   const dlCsv = () => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csvText], { type: "text/csv" }));
@@ -62,49 +62,57 @@ export function DiveChart({
   };
 
   return (
-    <div className="c">
-      <div className="chdr">
-        <b>{dive.label || dive.filename} — {deviceLabel}</b>
-        <span>
-          <button className="xbtn" onClick={dlCsv}>download CSV</button>{" "}
-          <button className="xbtn" onClick={onClose}>close</button>
-        </span>
+    <div className="dchart">
+      {/* Back to one card (undoing the earlier two-card split) — but the settings portion keeps
+          its 5-tile mosaic: one big square (facts + CAL/SENSORS + note) next to a 2x2 block of
+          four small squares (weather, when, rows, water type), followed by the charts + hover
+          legend underneath, all inside the same "c" panel. */}
+      <div className="c dpanel">
+        {/* Just the title + download button up here, above the mosaic — the identity byline
+            (cast/mission/operator) moved back into .dc-bigbox, see DiveInfo in DiveMeta.tsx.
+            Close now floats in the panel's own corner (.dpanel > .xclose, no background) rather
+            than sitting paired with "download CSV" — it dismisses the WHOLE panel, not just this
+            row, so it shouldn't read as a third row-level action next to a content button. */}
+        <div className="chdr">
+          <div className="chdrmain">
+            <b>{dive.label || dive.filename} — {deviceLabel}</b>
+          </div>
+          <span className="chdrbtns">
+            <button className="xbtn" onClick={dlCsv}>download CSV</button>
+          </span>
+        </div>
+        <button className="xclose" onClick={onClose} aria-label="Close" title="Close" />
+
+        {/* grid-template-rows is set explicitly (from data, not measurement) because
+            .dc-bigbox's `grid-row: 1 / -1` needs a real explicit grid to span against —
+            see the comment on diveStatCardRows in DiveMeta.tsx for why. */}
+        <div className="dcsettings-grid" style={{ gridTemplateRows: `repeat(${diveStatCardRows(dive)}, 1fr)` }}>
+          <div className="dc-bigbox">
+            <DiveInfo dive={dive} />
+          </div>
+
+          <div className="dc-statwrap">
+            <DiveStatCards dive={dive} />
+          </div>
+        </div>
+
+        <div className="dc-chartarea">
+          {!parsed.rows.length ? (
+            <p className="hint">No data rows in this dive.</p>
+          ) : (
+            <DiveCharts
+              parsed={parsed}
+              thresholds={thresholds}
+              enabled={enabled}
+              showRaw={showRaw}
+              showThresholds={showThresholds && hasThresholds}
+              cyclopsUnits={dive.cyclops_units ?? undefined}
+              poiTitles={poiTitles}
+              onPoiClick={openPoi}
+            />
+          )}
+        </div>
       </div>
-
-      <DiveMeta dive={dive} />
-
-      <div className="controls">
-        {CSER.map((m) => (
-          <label key={m.k} className={"chip" + (enabled.has(m.k) ? " on" : "")}>
-            <input type="checkbox" checked={enabled.has(m.k)} onChange={() => toggle(m.k)} />
-            <i style={{ background: m.col }} />{m.lab}
-          </label>
-        ))}
-        <label className="chip">
-          <input type="checkbox" checked={showThresholds} disabled={!hasThresholds}
-                 onChange={(e) => setShowThresholds(e.target.checked)} />
-          Threshold bands{!hasThresholds ? " (none set)" : ""}
-        </label>
-        <label className="chip">
-          <input type="checkbox" checked={showRaw} onChange={(e) => setShowRaw(e.target.checked)} />
-          Raw diagnostic channels
-        </label>
-      </div>
-
-      {!parsed.rows.length ? (
-        <p className="hint">No data rows in this dive.</p>
-      ) : (
-        <DiveCharts
-          parsed={parsed}
-          thresholds={thresholds}
-          enabled={enabled}
-          showRaw={showRaw}
-          showThresholds={showThresholds && hasThresholds}
-          cyclopsUnits={dive.cyclops_units ?? undefined}
-          poiTitles={poiTitles}
-          onPoiClick={openPoi}
-        />
-      )}
 
       {modal && authorId && (
         <AnnotationModal

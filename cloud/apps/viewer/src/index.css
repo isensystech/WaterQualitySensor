@@ -1,135 +1,331 @@
 /* Dark theme ported from the logger portal / edge-function viewer, extended with the
-   calendar + controls layout. Single stylesheet, no framework. */
+   calendar + controls layout. Single stylesheet, no framework.
+
+   Colors below now reference the Mantine theme's CSS variables (src/theme.ts) instead of
+   duplicating hex values, so this stylesheet and any Mantine component stay in sync — change
+   a color once in theme.ts and it updates everywhere, here included. Each var() keeps its
+   original hex as a fallback, so nothing changes visually if a variable isn't available for
+   some reason. A few status colors (warning/error/success-ish greens used for calibration and
+   threshold states) aren't in the theme yet and are left as plain hex — good candidates for a
+   later pass once we add "success"/"warning"/"danger" tokens to theme.ts. */
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
 body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  margin: 0; padding: 18px; background: #0c1020; color: #e8eaf0;
-  max-width: 1180px; margin: 0 auto;
+  margin: 0; padding: 18px; background: var(--mantine-color-dark-9, #0c1020); color: var(--mantine-color-dark-0, #e8eaf0);
+  /* No max-width / centering: the page fills the actual browser width. On the wide dashboard
+     tier below, the calendar+list column is a fixed width and the map+charts column is 1fr, so
+     it's specifically that right column that stretches to fill whatever space is left — not
+     the whole page just getting a bigger centered box. (Login has its own Container, so it
+     stays a comfortable fixed width regardless of this.) */
 }
-h2 { color: #19c3c3; margin: .4em 0; }
-a { color: #19c3c3; }
-.hint { font-size: 13px; color: #9aa3c0; line-height: 1.5; }
+h2 { color: var(--mantine-color-brand-6, #19c3c3); margin: .4em 0; }
+a { color: var(--mantine-color-brand-6, #19c3c3); }
+.hint { font-size: 13px; color: var(--mantine-color-dark-2, #9aa3c0); line-height: 1.5; }
 .warn { color: #efb02a; font-size: 14px; }
 .err { color: #ff5b50; font-size: 14px; }
 
-.c { background: #161b30; border-radius: 12px; padding: 16px; margin: 12px 0; }
+/* Outer panels (.c — calendar/list/controls cards, the whole chart panel) get a slightly bigger
+   radius than the small tiles nested inside them (.dc-bigbox/.statcard, still --mantine-radius-md
+   / 8px) — nesting two elements at the *same* radius reads as a mismatch once there's real
+   padding between them, since the inner corner doesn't share the outer one's arc. Mantine's own
+   --mantine-radius-lg jumps all the way to 16px, which felt like too big a step for "a bit more" —
+   12px instead, hardcoded rather than pulled from the radius scale. */
+.c { background: var(--mantine-color-dark-7, #161b30); border-radius: 12px; padding: 16px; margin: 12px 0; }
+/* No more blanket `margin-top` here — it was a leftover from the old plain-HTML forms (stacked
+   inputs/buttons with spacing baked into each element). Mantine components render real
+   <input>/<button> elements too, and Mantine doesn't set its own margin, so this old rule was
+   applying UNOPPOSED to every Mantine Button/TextInput/Card-as-button in the app — that's what
+   was pushing the "Sign out" button down out of line with the email text next to it. Spacing
+   for the handful of still-plain elements that actually need it (e.g. AnnotationModal's field
+   labels) is set locally on those elements instead. */
 input, button, select {
-  box-sizing: border-box; padding: 11px; border-radius: 8px; font-size: 15px; margin-top: 8px;
+  box-sizing: border-box; padding: 11px; border-radius: 8px; font-size: 15px;
 }
-input { width: 100%; border: 1px solid #2a3252; background: #0c1020; color: #fff; }
+input { width: 100%; border: 1px solid var(--mantine-color-dark-5, #2a3252); background: var(--mantine-color-dark-9, #0c1020); color: #fff; }
 button { border: 0; background: #185fa5; color: #fff; cursor: pointer; }
 button:disabled { opacity: .55; cursor: default; }
-button.ghost { background: #1d2440; color: #9aa3c0; }
+button.ghost { background: var(--mantine-color-dark-6, #1d2440); color: var(--mantine-color-dark-2, #9aa3c0); }
 
 .bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* login */
 #login { max-width: 420px; margin: 8vh auto; }
 
-/* two-column layout: calendar + dive list, collapsing on narrow screens */
-.layout { display: grid; grid-template-columns: 300px 1fr; gap: 12px; align-items: start; }
-@media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
-.col-cal .c, .col-list .c { margin: 0; }
+/* Dashboard grid for the map/calendar/list/charts cards. Three tiers:
+   - narrow (default, phones): one column, stacked map -> calendar -> list -> charts
+   - medium (720-1179px, "almost square" windows): map full-width on top, calendar+list side
+     by side below, charts full-width at the bottom (this was the entire old ".layout" behavior,
+     kept as-is here)
+   - wide (>=1180px, a maximized monitor): calendar next to the map, list under the calendar,
+     charts under the map — two columns instead of one centered strip with empty margins. */
+.dashboard {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;
+  grid-template-areas: "map" "cal" "controls" "list" "charts";
+  align-items: start;
+}
+/* Invisible to layout below the wide tier: .d-cal/.d-map/.d-controls act as independent grid
+   areas of .dashboard, exactly as if this wrapper weren't there. */
+.d-leftstack { display: contents; }
+@media (min-width: 720px) and (max-width: 1179px) {
+  .dashboard {
+    grid-template-columns: 300px 1fr;
+    grid-template-areas: "map map" "cal list" "controls controls" "charts charts";
+  }
+}
+@media (min-width: 1180px) {
+  .dashboard {
+    /* Single row now — calendar+map+controls are one grid area (leftstack) that stacks them
+       with flexbox internally, so a tall charts/list column can never push a gap between them
+       (which happened when they were separate grid rows that a tall spanning item could
+       inflate unevenly). */
+    grid-template-columns: 300px 1fr 300px;
+    grid-template-areas: "leftstack charts list";
+  }
+  .d-leftstack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    grid-area: leftstack;
+  }
+}
+.d-map { grid-area: map; }
+.d-cal { grid-area: cal; }
+.d-controls { grid-area: controls; }
+.d-list { grid-area: list; }
+.d-charts { grid-area: charts; }
+/* DiveChart's own card (".c", not yet migrated to a Mantine Paper) still carries its old
+   top/bottom margin — that's what was pushing it down out of line with the calendar/list
+   cards above, which sit flush at the top of their grid cell. Zero it out just here. */
+.d-charts .c { margin: 0; }
+/* .controls (the metric-visibility chips) used to live inline in the chart panel with its own
+   spacing margin; now it's the whole content of its own card, so that margin would just add
+   unwanted space inside the card. */
+.d-controls .controls { margin: 0; }
 
 /* dive list */
 .dive {
-  display: block; width: 100%; text-align: left; background: #161b30;
-  border: 1px solid #2a3252; border-radius: 12px; padding: 12px 14px; margin: 8px 0; color: #e8eaf0;
+  display: block; width: 100%; text-align: left; background: var(--mantine-color-dark-7, #161b30);
+  border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 12px; padding: 12px 14px; margin: 8px 0; color: var(--mantine-color-dark-0, #e8eaf0);
 }
 .dive:first-child { margin-top: 0; }
-.dive:hover { border-color: #19c3c3; }
-.dive.active { border-color: #19c3c3; box-shadow: 0 0 0 1px #19c3c3 inset; }
-.dive b { color: #19c3c3; }
-.dive small { color: #9aa3c0; display: block; margin-top: 3px; line-height: 1.5; }
+.dive:hover { border-color: var(--mantine-color-brand-6, #19c3c3); }
+.dive.active { border-color: var(--mantine-color-brand-6, #19c3c3); box-shadow: 0 0 0 1px var(--mantine-color-brand-6, #19c3c3) inset; }
+.dive b { color: var(--mantine-color-brand-6, #19c3c3); }
+.dive small { color: var(--mantine-color-dark-2, #9aa3c0); display: block; margin-top: 3px; line-height: 1.5; }
 
-/* calendar */
-.cal { user-select: none; }
-.calhdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.caldow span { text-align: center; font-size: 11px; color: #9aa3c0; padding: 2px 0; }
+/* calendar (compact) — capped max-width so it doesn't stretch to fill its column, plus smaller
+   gaps/padding/font sizes than a regular card. */
+.cal { user-select: none; max-width: 260px; margin: 0 auto; }
+.calhdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.calhdr b { font-size: 13px; }
+.calhdr .xbtn { padding: 4px 10px; font-size: 13px; margin-top: 0; }
+.calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.caldow span { text-align: center; font-size: 10px; color: var(--mantine-color-dark-2, #9aa3c0); padding: 1px 0; }
 .calcell {
-  position: relative; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 8px;
-  background: #0c1020; border: 1px solid #2a3252; color: #6b7699; font-size: 12px;
+  position: relative; aspect-ratio: 1 / 1; padding: 0; margin: 0; border-radius: 6px;
+  background: var(--mantine-color-dark-9, #0c1020); border: 1px solid var(--mantine-color-dark-5, #2a3252); color: var(--mantine-color-dark-3, #6b7699); font-size: 11px;
   display: flex; align-items: center; justify-content: center;
 }
 .calcell.empty { background: transparent; border: 0; }
-.calcell.has { color: #e8eaf0; border-color: #2f6f6b; background: #12233a; cursor: pointer; }
-.calcell.has:hover { border-color: #19c3c3; }
-.calcell.sel { border-color: #19c3c3; box-shadow: 0 0 0 1px #19c3c3 inset; }
+.calcell.has { color: var(--mantine-color-dark-0, #e8eaf0); border-color: #2f6f6b; background: #12233a; cursor: pointer; }
+.calcell.has:hover { border-color: var(--mantine-color-brand-6, #19c3c3); }
+.calcell.sel { border-color: var(--mantine-color-brand-6, #19c3c3); box-shadow: 0 0 0 1px var(--mantine-color-brand-6, #19c3c3) inset; }
 .calcell:disabled { cursor: default; }
 .cald { line-height: 1; }
 .calbadge {
-  position: absolute; top: 2px; right: 2px; min-width: 15px; height: 15px; padding: 0 3px;
-  border-radius: 8px; background: #19c3c3; color: #06121a; font-size: 10px; font-weight: 700;
+  position: absolute; top: 1px; right: 1px; min-width: 12px; height: 12px; padding: 0 2px;
+  border-radius: 6px; background: var(--mantine-color-brand-6, #19c3c3); color: #06121a; font-size: 9px; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
 }
-.calclear { width: 100%; font-size: 13px; }
+.calclear { width: 100%; font-size: 12px; padding: 6px; margin-top: 6px; }
 
-/* chart panel */
-.chdr { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
-.chdr b { color: #19c3c3; }
-.xbtn { background: #1d2440; color: #9aa3c0; padding: 6px 12px; }
+/* chart panel — one "c" card again (the earlier two-card split was undone): the settings mosaic
+   on top, then the charts + hover legend below, separated by a thin rule rather than a second
+   card boundary. */
+.dchart { display: flex; flex-direction: column; }
+.dc-chartarea { margin-top: 14px; }
+/* flex-wrap: nowrap (not wrap) is the point here — the buttons must stay pinned top-right even
+   when the title is long enough to wrap onto two lines. .chdrmain (min-width:0, flex:1 1 auto)
+   shrinks and lets its own text wrap internally instead of pushing .chdrbtns onto its own row. */
+.chdr { display: flex; flex-wrap: nowrap; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+.chdr b { color: var(--mantine-color-brand-6, #19c3c3); }
+.chdrbtns { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.xbtn {
+  background: var(--mantine-color-dark-6, #1d2440); color: var(--mantine-color-dark-2, #9aa3c0);
+  padding: 6px 12px; white-space: nowrap;
+  transition: background-color .12s ease;
+}
+/* Matches Mantine's own Button variant="default" hover (see "Sign out" in DiveGraph.tsx) — a
+   single subtle background step, no text-color jump — rather than the Chip's more vivid toggle
+   -style hover, since these are one-shot actions, not on/off state toggles. */
+.xbtn:hover { background: var(--mantine-color-dark-5, #2a3252); }
+/* Icon-only close. Base rule below is a plain in-flow variant (solid plate) kept around in case
+   some future spot wants close paired inline with another button; every close in the app today
+   (dive panel, AnnotationModal — see the .dpanel/.modal rules right after) instead floats bare in
+   its container's own corner, since each one dismisses the WHOLE window/card, not a row of it.
+   The × is drawn with two CSS bars (::before/::after) rather than the "×" glyph — relying on the
+   font's own multiplication-sign glyph was the "crooked cross" bug: its weight/centering varies by
+   font and platform and reliably looked lopsided, where two same-size bars crossed at dead center
+   never can. */
+.xclose {
+  position: relative;
+  background: var(--mantine-color-dark-6, #1d2440); color: var(--mantine-color-dark-2, #9aa3c0);
+  width: 30px; height: 30px; padding: 0; flex-shrink: 0;
+  border-radius: var(--mantine-radius-md, 8px);
+  transition: background-color .12s ease;
+}
+/* .dpanel (the dive-chart card) and .modal (AnnotationModal) both float their close bare in the
+   container's own top-right corner instead of sitting in the .chdr row next to another button —
+   no background/plate at all, not even on hover (a hover plate here read as its own untidy little
+   box floating in the corner) — so it reads as chrome, not another content-level action. Hover
+   instead just brightens the × itself (color, which the bars inherit via currentColor). .chdr gets
+   matching right padding reserved so its own content never runs under the floating icon. */
+.dpanel, .modal { position: relative; }
+.dpanel > .chdr, .modal > .chdr { padding-right: 38px; }
+.dpanel > .xclose, .modal > .xclose { position: absolute; top: 14px; right: 14px; background: transparent; }
+.dpanel > .xclose:hover, .modal > .xclose:hover { background: transparent; color: var(--mantine-color-dark-0, #e8eaf0); }
+.xclose::before, .xclose::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 13px; height: 2px;
+  background: currentColor; border-radius: 1px;
+}
+.xclose::before { transform: translate(-50%, -50%) rotate(45deg); }
+.xclose::after { transform: translate(-50%, -50%) rotate(-45deg); }
+.xclose:hover { background: var(--mantine-color-dark-5, #2a3252); }
 .cmeta {
-  font-family: ui-monospace, monospace; font-size: 11.5px; color: #9aa3c0; background: #0c1020;
-  border: 1px solid #2a3252; border-radius: 8px; padding: 8px 10px; margin: 8px 0; line-height: 1.55;
+  font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--mantine-color-dark-2, #9aa3c0); background: var(--mantine-color-dark-9, #0c1020);
+  border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 8px; padding: 8px 10px; margin: 8px 0; line-height: 1.55;
   overflow-x: auto;
 }
 .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .chip {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #9aa3c0;
-  background: #0c1020; border: 1px solid #2a3252; border-radius: 999px; padding: 5px 11px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--mantine-color-dark-2, #9aa3c0);
+  background: var(--mantine-color-dark-9, #0c1020); border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 999px; padding: 5px 11px;
   margin: 0; cursor: pointer;
 }
-.chip.on { color: #e8eaf0; border-color: #3a4675; }
+.chip.on { color: var(--mantine-color-dark-0, #e8eaf0); border-color: var(--mantine-color-dark-4, #3a4675); }
 .chip input { width: auto; margin: 0; }
 .chip i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 
 .charts {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; margin-top: 8px;
 }
-.charts svg { width: 100%; height: auto; background: #0c1020; border: 1px solid #2a3252; border-radius: 8px; display: block; }
+.charts svg { width: 100%; height: auto; background: var(--mantine-color-dark-9, #0c1020); border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 8px; display: block; }
 .cnote { font-size: 12.5px; color: #efb02a; margin: 6px 0; }
-.clegend { display: flex; gap: 14px; font-size: 12px; color: #9aa3c0; margin-top: 6px; }
+.clegend { display: flex; gap: 14px; font-size: 12px; color: var(--mantine-color-dark-2, #9aa3c0); margin-top: 6px; }
 .clegend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-.xax { display: flex; justify-content: space-between; font-size: 11px; color: #9aa3c0; margin-top: 4px; }
+.xax { display: flex; justify-content: space-between; font-size: 11px; color: var(--mantine-color-dark-2, #9aa3c0); margin-top: 4px; }
 
-/* ---- v2: metadata pictograms ---- */
-.metawrap { margin: 4px 0 10px; }
-.metarow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
-.metachip { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; background: #0c1020; border: 1px solid #2a3252; border-radius: 8px; padding: 4px 9px; color: #e8eaf0; max-width: 100%; }
-.metachip .mi { font-size: 13px; }
-.metalabel { font-size: 11px; color: #9aa3c0; text-transform: uppercase; letter-spacing: .04em; margin-right: 2px; }
-.calchip { font-size: 11.5px; border-radius: 6px; padding: 3px 7px; border: 1px solid #2a3252; }
-.calchip.on { color: #5dcaa5; border-color: #2f6f52; background: #0f2018; }
-.calchip.off { color: #6b7699; background: #0c1020; }
+/* ---- v8: settings card as a 5-tile mosaic — every tile stretches to fill its cell ----
+   Cards are no longer forced square (aspect-ratio + align-self:start): they now use the grid's
+   DEFAULT stretch alignment, same as the big box. That's what actually kills the leftover-gap
+   problem at in-between widths — with a fixed aspect-ratio, a card's height was locked to its
+   column's width, so whenever the big box's own content needed more height than that produced,
+   the row grew but the (still-square) card didn't follow, leaving blank space under it. With
+   stretch, every tile just fills however tall its row turns out to be, by construction — no card
+   can ever be shorter than its row, so there's nothing left to leave a gap.
+   3 columns sized purely by PROPORTION (3fr/1fr/1fr — fixed ratio of the container's own width,
+   never affected by anything inside them). The big box spans column 1 across every card row; the
+   cards auto-place into columns 2–3 (one .statcard per cell, `dc-statwrap`/`.statcards` are
+   unwrapped via `display: contents` so they don't interfere with the shared grid).
+   grid-template-rows is intentionally NOT set here: it's set inline per-dive in DiveChart.tsx via
+   `diveStatCardRows()`. That's load-bearing, not optional — `.dc-bigbox`'s `grid-row: 1 / -1`
+   resolves `-1` against the EXPLICIT grid (CSS Grid spec), and with no grid-template-rows at all
+   that span silently collapses to 1 row, so the big box stopped covering the second card row and
+   auto-placement threw a card into the freed-up first column instead of the second. Confirmed with
+   a standalone Chromium repro. Do not add a static grid-template-rows here — it needs to match the
+   actual card count, which only DiveChart.tsx knows. */
+.dcsettings-grid { display: grid; grid-template-columns: 3fr 1fr 1fr; gap: 10px; }
+@media (max-width: 720px) {
+  .dcsettings-grid { grid-template-columns: 1fr 1fr; grid-template-rows: none !important; }
+  .dc-bigbox { grid-column: 1 / -1; grid-row: auto; }
+  .dc-statwrap { display: block; }
+  .statcards { display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 104px; gap: 10px; }
+}
+.dc-bigbox {
+  grid-column: 1; grid-row: 1 / -1; min-width: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border-radius: var(--mantine-radius-md, 8px);
+  background: var(--mantine-color-dark-6, #1c2340); border: 1px solid var(--mantine-color-dark-5, #2a3252);
+}
+.dc-statwrap { display: contents; }
+/* Three stacked icon-led lines (cast/mission, operator, site/GPS) instead of one dot-separated
+   run — each metaLine() call joins its own parts with " | ", one icon per line. */
+.metalines { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--mantine-color-dark-0, #e8eaf0); }
+.metaline { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.metaline .mi { font-size: 13px; flex-shrink: 0; }
+.statcards { display: contents; }
+.statcard { width: 100%; height: 100%; min-height: 90px; display: flex; flex-direction: column; justify-content: space-between; padding: 7px 8px; border-radius: var(--mantine-radius-md, 8px); background: var(--mantine-color-dark-6, #1c2340); border: 1px solid var(--mantine-color-dark-5, #2a3252); overflow: hidden; box-sizing: border-box; }
+.statcard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.statcard-title { font-size: 9.5px; font-weight: 600; color: var(--mantine-color-dark-2, #9aa3c0); text-transform: uppercase; letter-spacing: .03em; }
+.statcard-icon { font-size: 22px; flex-shrink: 0; line-height: 1; }
+.statcard-value { font-size: 16px; font-weight: 700; color: var(--mantine-color-dark-0, #e8eaf0); line-height: 1.15; overflow-wrap: anywhere; }
+.statcard-caption { font-size: 9.5px; color: var(--mantine-color-dark-3, #6b7699); overflow-wrap: anywhere; line-height: 1.25; }
+/* Flexbox, not a shared grid — the grid version used max-content columns (to line up pH under
+   POET etc.) which don't shrink, so at in-between viewport widths where the big box got
+   squeezed, the CAL/SENSORS row didn't shrink with it and spilled out over the stat cards next
+   to it. Flex-wrap trades away the cross-row alignment for a guarantee that it always wraps
+   inside its own box instead of overflowing. */
+.statusgrid { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.statusrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.statuslabel { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--mantine-color-dark-2, #9aa3c0); }
+.statuscell { font-size: 11.5px; border-radius: 6px; padding: 3px 8px; border: 1px solid var(--mantine-color-dark-5, #2a3252); white-space: nowrap; text-align: center; }
+.statuscell.on { color: #5dcaa5; border-color: #2f6f52; background: #0f2018; }
+.statuscell.off { color: var(--mantine-color-dark-3, #6b7699); background: var(--mantine-color-dark-9, #0c1020); opacity: .7; }
+.metanote { grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--mantine-color-dark-2, #9aa3c0); }
+
+.chdrmain { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
 
 /* ---- v2: interactive charts ---- */
-.readout { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; background: #12172b; border: 1px solid #2a3252; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
-.rtime { font-family: ui-monospace, monospace; font-size: 12px; color: #19c3c3; min-width: 66px; font-weight: 700; }
-.rval { font-size: 12px; color: #9aa3c0; display: inline-flex; align-items: center; gap: 5px; }
-.rval i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-.rval b { color: #e8eaf0; }
+/* Compact spacing (gap/padding/font-size/icon size all trimmed down) so the raw-diagnostics
+   metrics (11 of them once "Raw diagnostic channels" is on) fit back into two lines instead of
+   three — the earlier anti-jump fix reserved real width per value, which is correct, but it also
+   made every item wider, so fewer fit per line at the same spacing. */
+.readout { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: center; background: #12172b; border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 8px; padding: 7px 10px; margin-bottom: 8px; }
+.rtime { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--mantine-color-brand-6, #19c3c3); min-width: 56px; font-weight: 700; }
+.rval { font-size: 11.5px; color: var(--mantine-color-dark-2, #9aa3c0); display: inline-flex; align-items: center; gap: 4px; }
+.rval i { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+/* fmtNum() varies decimal precision by magnitude (0.958 vs 13.65 vs 101.2 — 3/2/1 decimals), so
+   the value's rendered width changes on basically every mousemove while scrubbing a chart. In a
+   flex-wrap row that shifts exactly where the wrap point falls, so the whole .readout bar's
+   height flickered between one and two lines as you moved the mouse — that's the "jumping" bug.
+   A monospace font + a reserved min-width (tabular digits, right-aligned like a scoreboard) keeps
+   each value's box a stable size regardless of which digit count it happens to need this frame.
+   min-width was 5ch first, which missed the actual worst case: a negative sign adds a character
+   fmtNum's own digit-count budget doesn't account for — e.g. depth genuinely renders as "-0.958"
+   (6 chars), which is exactly the real value that was still triggering the jump. 7ch covers the
+   sign plus the largest realistic "-XXX.X" shape with a little headroom. */
+.rval b {
+  color: var(--mantine-color-dark-0, #e8eaf0); font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums; display: inline-block; min-width: 7ch; text-align: right;
+}
 .stack { display: flex; flex-direction: column; gap: 8px; }
-.mchart { width: 100%; height: auto; background: #0c1020; border: 1px solid #2a3252; border-radius: 8px; display: block; }
+.mchart { width: 100%; height: auto; background: var(--mantine-color-dark-9, #0c1020); border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 8px; display: block; }
 
 /* ---- v2: map ---- */
-.cardh { color: #19c3c3; margin: 0 0 10px; font-size: 15px; }
-.mapbox { width: 100%; height: 340px; border-radius: 8px; overflow: hidden; border: 1px solid #2a3252; }
-.mappop { font-size: 12px; color: #0c1020; }
+.cardh { color: var(--mantine-color-brand-6, #19c3c3); margin: 0 0 10px; font-size: 15px; }
+.mapbox { width: 100%; height: 220px; border-radius: 8px; overflow: hidden; border: 1px solid var(--mantine-color-dark-5, #2a3252); }
+.mappop { font-size: 12px; color: var(--mantine-color-dark-9, #0c1020); }
 .mappop i { color: #556; }
 
 /* ---- v2: annotation modal ---- */
 .modalback { position: fixed; inset: 0; background: rgba(6,10,20,.72); display: flex; align-items: flex-start; justify-content: center; padding: 5vh 16px; z-index: 50; overflow: auto; }
-.modal { background: #161b30; border: 1px solid #2a3252; border-radius: 14px; padding: 18px; width: 100%; max-width: 520px; }
-.fld { display: block; font-size: 12px; color: #9aa3c0; margin: 10px 0 0; }
-.fld input, .fld textarea { width: 100%; margin-top: 5px; background: #0c1020; border: 1px solid #2a3252; color: #fff; border-radius: 8px; padding: 10px; font-size: 14px; font-family: inherit; resize: vertical; }
-.phdr { font-size: 12px; color: #9aa3c0; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+.modal { background: var(--mantine-color-dark-7, #161b30); border: 1px solid var(--mantine-color-dark-5, #2a3252); border-radius: 14px; padding: 18px; width: 100%; max-width: 520px; }
+.fld { display: block; font-size: 12px; color: var(--mantine-color-dark-2, #9aa3c0); margin: 10px 0 0; }
+.fld input, .fld textarea { width: 100%; margin-top: 5px; background: var(--mantine-color-dark-9, #0c1020); border: 1px solid var(--mantine-color-dark-5, #2a3252); color: #fff; border-radius: 8px; padding: 10px; font-size: 14px; font-family: inherit; resize: vertical; }
+.phdr { font-size: 12px; color: var(--mantine-color-dark-2, #9aa3c0); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
 .photos { display: flex; flex-wrap: wrap; gap: 8px; }
-.photo { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid #2a3252; }
+.photo { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--mantine-color-dark-5, #2a3252); }
 .photo img { width: 100%; height: 100%; object-fit: cover; }
-.phload { display: flex; align-items: center; justify-content: center; height: 100%; color: #9aa3c0; }
+.phload { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mantine-color-dark-2, #9aa3c0); }
 .pdel { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; padding: 0; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: 14px; line-height: 1; }
-.photoadd { width: 84px; height: 84px; border: 1px dashed #3a4675; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 28px; color: #9aa3c0; cursor: pointer; background: #0c1020; }
+.photoadd { width: 84px; height: 84px; border: 1px dashed var(--mantine-color-dark-4, #3a4675); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 28px; color: var(--mantine-color-dark-2, #9aa3c0); cursor: pointer; background: var(--mantine-color-dark-9, #0c1020); }
 .photoadd.dis { opacity: .5; cursor: default; }
-.mactions { display: flex; gap: 8px; margin-top: 14px; }
+/* justify-content: flex-end (not space-between) so Save stays pinned to the right even when
+   "Delete POI note" isn't rendered (a new POI has no note yet) — space-between would leave a
+   lone Save sitting at the left with nothing to space against. Delete, when present, groups in
+   just to Save's left rather than spreading to the opposite edge — the DOM order in
+   AnnotationModal.tsx puts Delete first for exactly this reason. */
+.mactions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }

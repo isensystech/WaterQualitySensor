@@ -51,8 +51,10 @@ export function MapCard({ dives, onSelect }: { dives: Dive[]; onSelect: (d: Dive
   }
   return (
     <>
+      <p className="hint" style={{ margin: "0 0 6px", fontSize: 11 }}>
+        {geo.length} geolocated dive{geo.length > 1 ? "s" : ""} · click a marker to open its graph.
+      </p>
       <div ref={box} className="mapbox" />
-      <p className="hint" style={{ marginTop: 6 }}>{geo.length} geolocated dive{geo.length > 1 ? "s" : ""} · click a marker to open its graph.</p>
     </>
   );
 }

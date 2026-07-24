@@ -1,16 +1,30 @@
 {
     "cmake.sourceDirectory": "/Users/scott/Documents/PlatformIO/Projects/WaterQuality/WaterQualitySensor/firmware",
     "workbench.colorCustomizations": {
-        "activityBar.activeBackground": "#003400",
-        "activityBar.background": "#003400",
+        "activityBar.activeBackground": "#214e63",
+        "activityBar.background": "#214e63",
         "activityBar.foreground": "#e7e7e7",
         "activityBar.inactiveForeground": "#e7e7e799",
-        "activityBarBadge.background": "#4040ff",
+        "activityBarBadge.background": "#180813",
         "activityBarBadge.foreground": "#e7e7e7",
-        "sideBar.border": "#003400",
-        "activityBarTop.activeBackground": "#003400",
-        "activityBarTop.background": "#003400",
+        "activityBarTop.activeBackground": "#214e63",
+        "activityBarTop.background": "#214e63",
         "activityBarTop.foreground": "#e7e7e7",
-        "activityBarTop.inactiveForeground": "#e7e7e799"
-    }
+        "activityBarTop.inactiveForeground": "#e7e7e799",
+        "commandCenter.border": "#e7e7e799",
+        "commandCenter.foreground": "#e7e7e7",
+        "sash.hoverBorder": "#214e63",
+        "statusBar.background": "#14303d",
+        "statusBar.debuggingBackground": "#14303d",
+        "statusBar.debuggingForeground": "#e7e7e7",
+        "statusBar.foreground": "#e7e7e7",
+        "statusBarItem.hoverBackground": "#214e63",
+        "statusBarItem.remoteBackground": "#a83784",
+        "statusBarItem.remoteForeground": "#e7e7e7",
+        "titleBar.activeBackground": "#14303d",
+        "titleBar.activeForeground": "#e7e7e7",
+        "titleBar.inactiveBackground": "#14303d99",
+        "titleBar.inactiveForeground": "#e7e7e799"
+    },
+    "peacock.color": "#14303d"
 }

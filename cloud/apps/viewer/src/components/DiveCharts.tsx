@@ -17,16 +17,34 @@ function nearest(X: number[], x: number): number {
   return lo;
 }
 
+// Same "how close counts as a hit" tolerance the click handler uses (below) — hovering and
+// clicking should agree on which POI is being pointed at.
+const POI_HIT_PX = 16;
+
+// Index (not sample seq) of the POI nearest svgX, or null if none is within POI_HIT_PX.
+function nearestPoiOrd(pois: number[], X: number[], xMin: number, xMax: number, svgX: number): number | null {
+  let best = -1, bd = Infinity;
+  pois.forEach((p, ord) => {
+    const d = Math.abs(xPix(X[p], xMin, xMax) - svgX);
+    if (d < bd) { bd = d; best = ord; }
+  });
+  return best >= 0 && bd < POI_HIT_PX ? best : null;
+}
+
 interface Shared {
   model: ChartModel;
   hoverIdx: number | null;
   poiTitles: Map<number, string>;
   showLabels: boolean; // POI name labels only on the top chart to avoid repetition
+  hoveredPoiOrd: number | null;
   onHover: (i: number | null) => void;
+  onHoverPoi: (ord: number | null) => void;
   onPoiClick: (seq: number, ordinal: number) => void;
 }
 
-function MetricChart({ m, model, hoverIdx, poiTitles, showLabels, onHover, onPoiClick }: { m: MetricModel } & Shared) {
+function MetricChart({
+  m, model, hoverIdx, poiTitles, showLabels, hoveredPoiOrd, onHover, onHoverPoi, onPoiClick,
+}: { m: MetricModel } & Shared) {
   const { X, xMin, xMax, pois } = model;
 
   // The capture <rect> IS the plot area, so its bounding box maps 1:1 to [xMin,xMax].
@@ -50,16 +68,23 @@ function MetricChart({ m, model, hoverIdx, poiTitles, showLabels, onHover, onPoi
       ))}
       <rect x={CpadL} y={CpadT} width={CpW} height={CpH} fill="none" stroke="#2a3252" strokeWidth={1} rx={3} />
 
-      {/* POI vertical markers (visual only; clicks handled by the overlay) */}
+      {/* POI vertical markers (visual only; clicks handled by the overlay). The dot itself grows
+          + gets a soft halo + a light ring when the pointer is near enough to click it — the
+          cursor turning into a hand wasn't enough of a cue that THIS particular point, and not
+          just "somewhere on this chart", is clickable. */}
       {pois.map((p, ord) => {
         const px = xPix(X[p], xMin, xMax);
         const title = poiTitles.get(p);
+        const isHovered = ord === hoveredPoiOrd;
         return (
           <g key={p} pointerEvents="none">
             <line x1={px} y1={CpadT} x2={px} y2={CpadT + CpH} stroke="#c98bff" strokeWidth={1.4} strokeDasharray="5 6" opacity={0.7} />
-            <circle cx={px} cy={CpadT} r={4.5} fill="#c98bff" />
+            {isHovered && <circle cx={px} cy={CpadT} r={10} fill="#c98bff" opacity={0.28} />}
+            <circle cx={px} cy={CpadT} r={isHovered ? 6.5 : 4.5} fill="#c98bff"
+                    stroke={isHovered ? "#e8eaf0" : "none"} strokeWidth={isHovered ? 1.5 : 0}
+                    style={{ transition: "r 120ms ease" }} />
             {showLabels && (
-              <text x={px + 6} y={CpadT + 13} fill="#c98bff" fontSize={13} fontWeight={700}>
+              <text x={px + 6} y={CpadT + 13} fill="#c98bff" fontSize={13} fontWeight={isHovered ? 900 : 700}>
                 {title ? title.slice(0, 22) : `POI ${ord + 1}`}
               </text>
             )}
@@ -82,15 +107,20 @@ function MetricChart({ m, model, hoverIdx, poiTitles, showLabels, onHover, onPoi
       <text x={CpadL - 6} y={CpadT + 5} fill="#9aa3c0" fontSize={12} textAnchor="end">{fmtNum(m.inv ? m.yMin : m.yMax)}</text>
       <text x={CpadL - 6} y={CpadT + CpH} fill="#9aa3c0" fontSize={12} textAnchor="end">{fmtNum(m.inv ? m.yMax : m.yMin)}</text>
 
-      {/* transparent capture layer: mousemove -> crosshair, click near a POI -> open modal */}
+      {/* transparent capture layer: mousemove -> crosshair + POI-dot hover, click near a POI ->
+          open modal. Hover and click share the same "nearest POI within POI_HIT_PX" test, via
+          nearestPoiOrd, so the dot only lights up exactly where a click would actually land. */}
       <rect x={CpadL} y={CpadT} width={CpW} height={CpH} fill="transparent" style={{ cursor: pois.length ? "pointer" : "crosshair" }}
-        onMouseMove={(e) => onHover(nearest(X, locate(e).dataX))}
-        onMouseLeave={() => onHover(null)}
-        onClick={(e) => {
+        onMouseMove={(e) => {
           const { dataX, svgX } = locate(e);
-          let best = -1, bd = Infinity;
-          pois.forEach((p, ord) => { const d = Math.abs(X[p] - dataX); if (d < bd) { bd = d; best = ord; } });
-          if (best >= 0 && Math.abs(xPix(X[pois[best]], xMin, xMax) - svgX) < 16) onPoiClick(pois[best], best + 1);
+          onHover(nearest(X, dataX));
+          onHoverPoi(nearestPoiOrd(pois, X, xMin, xMax, svgX));
+        }}
+        onMouseLeave={() => { onHover(null); onHoverPoi(null); }}
+        onClick={(e) => {
+          const { svgX } = locate(e);
+          const ord = nearestPoiOrd(pois, X, xMin, xMax, svgX);
+          if (ord != null) onPoiClick(pois[ord], ord + 1);
         }} />
     </svg>
   );
@@ -113,6 +143,10 @@ export function DiveCharts({
     [parsed, enabled, showRaw, showThresholds, thresholds, cyclopsUnits],
   );
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // Which POI (by index into model.pois) the pointer is currently near enough to click, shared
+  // across all stacked metric charts so the highlighted dot stays in sync the same way the
+  // crosshair does — hovering over the top chart lights up the same POI on the charts below it.
+  const [hoveredPoiOrd, setHoveredPoiOrd] = useState<number | null>(null);
   const decimated = model.metrics.some((m) => m.decimated);
 
   if (!model.metrics.length) {
@@ -135,7 +169,8 @@ export function DiveCharts({
       <div className="stack">
         {model.metrics.map((m, i) => (
           <MetricChart key={m.key} m={m} model={model} hoverIdx={hoverIdx} poiTitles={poiTitles}
-                       showLabels={i === 0} onHover={setHoverIdx} onPoiClick={onPoiClick} />
+                       showLabels={i === 0} hoveredPoiOrd={hoveredPoiOrd}
+                       onHover={setHoverIdx} onHoverPoi={setHoveredPoiOrd} onPoiClick={onPoiClick} />
         ))}
       </div>
 

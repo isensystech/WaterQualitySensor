@@ -1,8 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { Button, Container, Divider, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
 import { supabase } from "../supabase";
 import { useAuth } from "./AuthProvider";
 
+// Pilot component for the Mantine migration (see src/theme.ts). Same logic as before — this
+// only changes how the screen is built: Mantine primitives + theme tokens instead of the
+// hand-rolled #login/.c/input/button classes from index.css. Nothing else in the app depends
+// on this file, so it's a safe first screen to convert and react to before doing the rest.
 export function Login() {
   const { session } = useAuth();
   const loc = useLocation() as { state?: { from?: { pathname?: string } } };
@@ -31,24 +36,33 @@ export function Login() {
   };
 
   return (
-    <div id="login">
-      <h2>WQL Dive Viewer</h2>
-      <div className="c">
-        <p className="hint">Sign in to browse dives uploaded by the water-quality loggers.</p>
+    <Container size={420} my={80}>
+      <Title order={2} ta="center" c="brand">WQL Dive Viewer</Title>
+      <Paper withBorder radius="md" p="lg" mt="lg" bg="dark.7">
+        <Text size="sm" c="dimmed" mb="md">
+          Sign in to browse dives uploaded by the water-quality loggers.
+        </Text>
         <form onSubmit={signIn}>
-          <input type="email" placeholder="Email" autoComplete="username"
-                 value={email} onChange={(e) => setEmail(e.target.value)} />
-          <input type="password" placeholder="Password" autoComplete="current-password"
-                 value={pass} onChange={(e) => setPass(e.target.value)} />
-          <button type="submit" style={{ width: "100%" }} disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
+          <Stack gap="sm">
+            <TextInput
+              label="Email" type="email" autoComplete="username" required
+              value={email} onChange={(e) => setEmail(e.currentTarget.value)}
+            />
+            <PasswordInput
+              label="Password" autoComplete="current-password" required
+              value={pass} onChange={(e) => setPass(e.currentTarget.value)}
+            />
+            <Button type="submit" fullWidth loading={busy} mt="xs">
+              Sign in
+            </Button>
+          </Stack>
         </form>
-        <button className="ghost" style={{ width: "100%" }} onClick={google}>
+        <Divider label="or" labelPosition="center" my="md" />
+        <Button variant="default" fullWidth onClick={google}>
           Continue with Google
-        </button>
-        {err && <p className="err">{err}</p>}
-      </div>
-    </div>
+        </Button>
+        {err && <Text c="red" size="sm" mt="md">{err}</Text>}
+      </Paper>
+    </Container>
   );
 }

@@ -71,8 +71,8 @@ export function AnnotationModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="chdr">
           <b>📌 POI {ordinal} · t+{timeLabel}</b>
-          <button className="xbtn" onClick={onClose}>close</button>
         </div>
+        <button className="xclose" onClick={onClose} aria-label="Close" title="Close" />
 
         <label className="fld">Name
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Thermocline" />
@@ -99,8 +99,8 @@ export function AnnotationModal({
 
         {err && <p className="err">{err}</p>}
         <div className="mactions">
-          <button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
           {note && <button className="ghost" onClick={clearNote} disabled={busy}>Delete POI note</button>}
+          <button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
         </div>
       </div>
     </div>
