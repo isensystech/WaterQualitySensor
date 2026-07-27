@@ -7,11 +7,13 @@ import { waterEmojiFor } from "./WaterTypeIcon";
 
 // One icon-led metadata line — parts joined with " | " under a single leading icon, e.g.
 // "🎯 Cast 1 | Cloud smoke test". Returns null (renders nothing) when there are no parts, so
-// callers can drop the result straight into JSX without a separate length check.
-function metaLine(icon: string, tip: string, parts: string[]): ReactNode {
+// callers can drop the result straight into JSX without a separate length check. `wrap` is for
+// the notes line: free text can run long, so it gets to wrap onto multiple lines (icon pinned to
+// the top) instead of the nowrap single-line treatment the short cast/operator/site facts use.
+function metaLine(icon: string, tip: string, parts: string[], wrap = false): ReactNode {
   if (parts.length === 0) return null;
   return (
-    <div className="metaline" title={tip}>
+    <div className={"metaline" + (wrap ? " metaline--wrap" : "")} title={tip}>
       <span className="mi" aria-hidden>{icon}</span>{parts.join(" | ")}
     </div>
   );
@@ -42,14 +44,16 @@ export function DiveInfo({ dive }: { dive: Dive }) {
   const line1 = metaLine("🎯", "Cast / mission", missionParts);
   const line2 = dive.operator ? metaLine("👤", "Operator", [dive.operator]) : null;
   const line3 = metaLine("📍", "Site / GPS", siteParts);
+  const line4 = dive.notes ? metaLine("📝", "Notes", [dive.notes], true) : null;
 
   return (
     <>
-      {(line1 || line2 || line3) && (
+      {(line1 || line2 || line3 || line4) && (
         <div className="metalines">
           {line1}
           {line2}
           {line3}
+          {line4}
         </div>
       )}
 
@@ -71,8 +75,6 @@ export function DiveInfo({ dive }: { dive: Dive }) {
           ))}
         </div>
       </div>
-
-      {dive.notes && <p className="metanote">{dive.notes}</p>}
     </>
   );
 }

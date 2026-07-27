@@ -256,6 +256,11 @@ button.ghost { background: var(--mantine-color-dark-6, #1d2440); color: var(--ma
 .metalines { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--mantine-color-dark-0, #e8eaf0); }
 .metaline { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .metaline .mi { font-size: 13px; flex-shrink: 0; }
+/* Notes can run long (a full sentence), unlike the short cast/operator/site facts above it —
+   wrap instead of nowrap, and pin the icon to the first line instead of vertically centering it
+   against however many lines the text wraps to. */
+.metaline--wrap { white-space: normal; align-items: flex-start; }
+.metaline--wrap .mi { margin-top: 1px; }
 .statcards { display: contents; }
 .statcard { width: 100%; height: 100%; min-height: 90px; display: flex; flex-direction: column; justify-content: space-between; padding: 7px 8px; border-radius: var(--mantine-radius-md, 8px); background: var(--mantine-color-dark-6, #1c2340); border: 1px solid var(--mantine-color-dark-5, #2a3252); overflow: hidden; box-sizing: border-box; }
 .statcard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
@@ -274,7 +279,6 @@ button.ghost { background: var(--mantine-color-dark-6, #1d2440); color: var(--ma
 .statuscell { font-size: 11.5px; border-radius: 6px; padding: 3px 8px; border: 1px solid var(--mantine-color-dark-5, #2a3252); white-space: nowrap; text-align: center; }
 .statuscell.on { color: #5dcaa5; border-color: #2f6f52; background: #0f2018; }
 .statuscell.off { color: var(--mantine-color-dark-3, #6b7699); background: var(--mantine-color-dark-9, #0c1020); opacity: .7; }
-.metanote { grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--mantine-color-dark-2, #9aa3c0); }
 
 .chdrmain { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
 

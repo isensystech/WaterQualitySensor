@@ -6,7 +6,7 @@
 // High-resolution coordinate space (the firmware portal used a tiny 336x132 box for a 240px
 // TFT; stretched to full width that looked upscaled/chunky). A ~1000-wide viewBox renders at
 // ~1:1 on screen, so strokes/fonts are crisp and the decimation target is wide = smoother lines.
-export const CVW = 1000, CHH = 220, CpadL = 54, CpadR = 16, CpadT = 26, CpadB = 24;
+export const CVW = 1000, CHH = 228, CpadL = 54, CpadR = 16, CpadT = 34, CpadB = 24;
 export const CpW = CVW - CpadL - CpadR, CpH = CHH - CpadT - CpadB;
 
 export type Pt = [number, number];
@@ -157,6 +157,39 @@ export function linePath(pts: Pt[], xMin: number, xMax: number, yMin: number, yM
     pen = true;
   }
   return d;
+}
+
+// Filled-area counterpart to linePath, for the gradient wash under each metric's line. Each
+// NaN-gapped run gets its own closed sub-path (line across the top, straight down to the plot's
+// bottom edge, back along the baseline) so a sensor-off gap doesn't drag a fill triangle across
+// it — same gap semantics as linePath, just closed into a shape instead of left open.
+export function areaPath(pts: Pt[], xMin: number, xMax: number, yMin: number, yMax: number, inv: boolean): string {
+  const baseline = (CpadT + CpH).toFixed(1);
+  let d = "", run: Pt[] = [];
+  const flush = () => {
+    if (run.length < 2) { run = []; return; }
+    const x0 = xPix(run[0][0], xMin, xMax).toFixed(1);
+    const xn = xPix(run[run.length - 1][0], xMin, xMax).toFixed(1);
+    d += `M${x0} ${baseline} `;
+    for (const p of run) d += `L${xPix(p[0], xMin, xMax).toFixed(1)} ${yPix(p[1], yMin, yMax, inv).toFixed(1)} `;
+    d += `L${xn} ${baseline} Z `;
+    run = [];
+  };
+  for (const p of pts) {
+    if (isNaN(p[1])) { flush(); continue; }
+    run.push(p);
+  }
+  flush();
+  return d;
+}
+
+// Evenly spaced y-axis tick fractions (0 = chart top, 1 = chart bottom) with their data values,
+// for the 0/25/50/75/100%-style scale in the reference design — was just the top/bottom two
+// values before. Same inv handling as yPix's inverse (depth charts read top-to-bottom as
+// small-to-large, everything else the usual small-at-bottom).
+export const Y_TICK_FRACS = [0, 0.25, 0.5, 0.75, 1];
+export function yTickValue(f: number, yMin: number, yMax: number, inv: boolean): number {
+  return inv ? yMin + f * (yMax - yMin) : yMax - f * (yMax - yMin);
 }
 
 export interface MetricModel {
