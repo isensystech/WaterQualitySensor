@@ -1,5 +1,11 @@
 # CLAUDE.md — Base Station Stack (Raspberry Pi 5)
 
+> **SUCCESSION NOTICE.** The Pi5 station is moving to the standalone repo
+> `isensystech/mobile-lab-station`. The new authority document is `MobileLab-Arch.md` in
+> that repo. It keeps every role in this document and adds the full sensor suite and the
+> STEM learning element. This document stays valid until its locked decisions are
+> harvested into `MobileLab-Arch.md`. Do not start new work against this document.
+
 Field aggregator + environmental station + cloud gateway. See /docs/BaseStation-Arch.md.
 PRE-STAGING — build starts after cloud + firmware upload leg work.
 

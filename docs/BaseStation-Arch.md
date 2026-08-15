@@ -7,6 +7,12 @@ environmental monitoring station + cloud gateway for the WQL logger fleet.
 > and sensor variants are still being chosen. Locked decisions are marked **[LOCKED]**;
 > everything else is directional. Nothing here is a build ticket yet.
 
+> **SUCCESSION NOTICE.** The Pi5 station is moving to the standalone repo
+> `isensystech/mobile-lab-station`. The new authority document is `MobileLab-Arch.md` in
+> that repo. It keeps every role in this document and adds the full sensor suite and the
+> STEM learning element. This document stays valid until its locked decisions are
+> harvested into `MobileLab-Arch.md`. Do not start new work against this document.
+
 ---
 
 ## Role
